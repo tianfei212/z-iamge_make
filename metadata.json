@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Infinite Gallery",
+  "description": "A high-performance AI image generation suite that creates thematic collections across multiple categories using Gemini 2.5 Flash Image.",
+  "requestFramePermissions": []
+}
