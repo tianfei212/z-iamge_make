@@ -1,0 +1,7 @@
+{
+  "api_keys": {
+    "dashscope": "sk-REPLACE_ME",
+    "z_image": "sk-REPLACE_ME",
+    "wan": "sk-REPLACE_ME"
+  }
+}
