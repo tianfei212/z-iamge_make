@@ -151,7 +151,7 @@ class APIHandler:
                 data = response.json()
                 if 'output' in data and 'task_status' in data['output']:
                     task_id = data['output']['task_id']
-                    return self._wait_for_task(task_id)
+                    return self._wait_for_task(task_id, category=category, prefix="z_image")
                 elif 'output' in data and 'results' in data['output']:
                     img_url = data['output']['results'][0]['url']
                     saved_path = self._download_to_file(img_url, category, "z_image")
