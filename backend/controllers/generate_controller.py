@@ -1,0 +1,136 @@
+"""
+/**
+ * @file backend/controllers/generate_controller.py
+ * @description 生成控制器（统一生成接口）。
+ */
+"""
+
+from fastapi import APIRouter, HTTPException
+import uuid
+import random
+from backend.models.generate_request_model import GenerateRequest
+from backend.services import DashScopeClient
+from backend.services.background_task_service import submit_job_request
+from backend.config import load_settings
+
+router = APIRouter()
+client = DashScopeClient()
+
+def _task_generator(context: dict):
+    """
+    Generator function that runs in background thread.
+    Refines prompt using Qwen (with caching) and generates list of tasks.
+    """
+    req_prompt = context.get("prompt")
+    req_category = context.get("category")
+    req_negative_prompt = context.get("negative_prompt")
+    req_count = context.get("count", 1)
+    
+    # Load generation parameters from settings (fresh load in background)
+    settings = load_settings()
+    params_cfg = settings.parameters
+    
+    # Default ranges
+    temp_min, temp_max = params_cfg.get("temperature_range", [1.0, 1.0])
+    top_p_min, top_p_max = params_cfg.get("top_p_range", [0.8, 0.8])
+    
+    # 1. Refine Prompt with Qwen (once per job, cached by client)
+    role = settings.role
+    default_style = settings.prompts.get("default_style", "")
+    default_negative = settings.prompts.get("default_negative_prompt", "")
+    
+    current_negative = req_negative_prompt if req_negative_prompt else default_negative
+    
+    print(f"Refining prompt in background... (Role configured: {bool(role)})")
+    refined = client.refine_prompt(
+        prompt=req_prompt,
+        category=req_category,
+        default_style=default_style,
+        default_negative_prompt=current_negative,
+        role=role
+    )
+    
+    final_positive_prompt = refined["positive_prompt"]
+    final_negative_prompt = refined["negative_prompt"]
+    print(f"Refined Positive: {final_positive_prompt[:50]}...")
+    
+    # 2. Generate Tasks
+    tasks = []
+    for _ in range(req_count):
+        seed = random.randint(0, 4294967295)
+        temperature = random.uniform(temp_min, temp_max)
+        top_p = random.uniform(top_p_min, top_p_max)
+        
+        task_params = {
+            "service": context.get("service"),
+            "prompt": final_positive_prompt,
+            "model": context.get("model"),
+            "category": req_category,
+            "size": context.get("size"),
+            "negative_prompt": final_negative_prompt,
+            "prompt_extend": context.get("prompt_extend"),
+            "resolution": context.get("resolution"),
+            "aspect_ratio": context.get("aspect_ratio"),
+            "seed": seed,
+            "temperature": temperature,
+            "top_p": top_p,
+        }
+        tasks.append(task_params)
+    return tasks
+
+def _process_single_image(params):
+    """
+    Worker function to process a single image generation request.
+    """
+    service = params.get("service")
+    resolution = params.get("resolution", "1K")
+    prompt = params.get("prompt")
+    
+    if service == "z_image":
+        result = client.call_z_image(
+            prompt=prompt,
+            category=params.get("category", "default"),
+            size=params.get("size", "1024*1024"),
+            prompt_extend=params.get("prompt_extend", False),
+            resolution=resolution,
+            seed=params.get("seed"),
+            temperature=params.get("temperature"),
+            top_p=params.get("top_p"),
+        )
+    else:
+        result = client.call_wan(
+            prompt=prompt,
+            model=params.get("model"),
+            category=params.get("category", "default"),
+            size=params.get("size", "1024*1024"),
+            negative_prompt=params.get("negative_prompt", ""),
+            resolution=resolution,
+            seed=params.get("seed"),
+            temperature=params.get("temperature"),
+            top_p=params.get("top_p"),
+        )
+    return client.to_data_url_if_local(result)
+
+
+@router.post("/api/generate")
+def generate(req: GenerateRequest):
+    # Log the incoming request
+    print(f"Generate Request: Prompt='{req.prompt}', Count={req.count}, Service={req.service}...")
+
+    # Qwen text generation is still synchronous (direct call)
+    if req.service == "qwen":
+        return client.call_qwen(req.prompt, model=req.model)
+
+    # Prepare Context for Background Job
+    job_context = req.dict()
+    job_id = str(uuid.uuid4())
+    
+    # Submit Job Request (Non-blocking)
+    submit_job_request(job_id, job_context, _task_generator, _process_single_image)
+    
+    return {
+        "status": "submitted",
+        "job_id": job_id,
+        "task_count": req.count,
+        "message": "Job submitted to background queue."
+    }

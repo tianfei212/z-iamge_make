@@ -25,7 +25,7 @@ export const ImageCard: React.FC<ImageCardProps> = ({ image }) => {
           {image.prompt}
         </p>
         <button 
-          onClick={() => window.open(image.url, '_blank')}
+          onClick={() => window.open(image.originalUrl || image.url, '_blank')}
           className="mt-3 text-[10px] bg-white/10 hover:bg-white/20 text-white py-1 px-3 rounded-full backdrop-blur-sm self-start transition-colors"
         >
           查看原图

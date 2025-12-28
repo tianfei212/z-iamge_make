@@ -9,8 +9,8 @@ export enum Category {
   ENVIRONMENT = '环境'
 }
 
-export type AspectRatio = '1:1' | '3:4' | '4:3' | '9:16' | '16:9';
-export type Resolution = '1K' | '2K' | '4K';
+export type AspectRatio = '1:1' | '3:4' | '4:3' | '9:16' | '16:9' | '2:3' | '3:2' | '21:9';
+export type Resolution = '360p' | '480p' | '720p' | '1080p' | '2K' | '4K';
 
 export type ModelProvider = 'google' | 'aliyun';
 
@@ -25,9 +25,11 @@ export interface ModelInfo {
 export interface GeneratedImage {
   id: string;
   url: string;
+  originalUrl?: string;
   category: string;
   prompt: string;
   timestamp: number;
+  filename?: string;
 }
 
 export interface BatchProgress {

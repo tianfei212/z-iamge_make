@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Category, GeneratedImage, BatchProgress, AspectRatio, Resolution, ModelInfo } from './types';
 import { geminiService } from './services/geminiService';
 import { ImageCard } from './components/ImageCard';
@@ -7,25 +7,18 @@ import JSZip from 'jszip';
 
 const MODELS: ModelInfo[] = [
   {
-    id: 'aliyun-wan-v2.1',
-    name: 'Aliyun Wan-v2.1',
+    id: 'wan',
+    name: 'Aliyun Wan 2.6',
     provider: 'aliyun',
-    modelName: 'wan-v2.1-t2i-14b',
-    description: 'Bailian High-Performance Generation'
+    modelName: 'wan2.6-t2i',
+    description: '通义万相 2.6 - 文本生成图像'
   },
   {
-    id: 'gemini-flash',
-    name: 'Gemini 2.5 Flash',
-    provider: 'google',
-    modelName: 'gemini-2.5-flash-image',
-    description: 'Fast & Efficient'
-  },
-  {
-    id: 'gemini-pro',
-    name: 'Gemini 3 Pro',
-    provider: 'google',
-    modelName: 'gemini-3-pro-image-preview',
-    description: 'High Quality & Detail'
+    id: 'z_image',
+    name: 'Z-Image Turbo',
+    provider: 'z_image',
+    modelName: 'z-image-turbo',
+    description: 'Z-Image Turbo - 高速图像生成'
   }
 ];
 
@@ -44,10 +37,24 @@ const INITIAL_PROMPTS: Record<string, string> = {
 const App: React.FC = () => {
   const [commonSubject, setCommonSubject] = useState('未来主义科技都市，雨夜，霓虹灯光');
   const [globalStyle, setGlobalStyle] = useState('电影级写实摄影，极高动态范围，徕卡色调');
+  // Removed hardcoded "Style: ..." prefix in backend, managed by frontend prompt assembly
+  // but wait, geminiService.ts handles prompt assembly.
+  // Let's check geminiService.ts next. 
   const [negativePrompt, setNegativePrompt] = useState('文字，水印，签名，模糊，重影，低对比度，畸形肢体');
   const [countPerCategory, setCountPerCategory] = useState<number>(20);
+
+  // Load default prompts from backend on mount
+  useEffect(() => {
+    fetch('/api/config/prompts')
+      .then(res => res.json())
+      .then(data => {
+        if (data.default_style) setGlobalStyle(data.default_style);
+        if (data.default_negative_prompt) setNegativePrompt(data.default_negative_prompt);
+      })
+      .catch(console.error);
+  }, []);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
-  const [resolution, setResolution] = useState<Resolution>('1K');
+  const [resolution, setResolution] = useState<Resolution>('1080p');
   
   const [selectedModel, setSelectedModel] = useState<ModelInfo>(MODELS[0]);
   const [categories, setCategories] = useState<string[]>(INITIAL_CATEGORIES);
@@ -56,6 +63,11 @@ const App: React.FC = () => {
   const [catPrompts, setCatPrompts] = useState<Record<string, string>>(INITIAL_PROMPTS);
   
   const [images, setImages] = useState<GeneratedImage[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+
   const [logs, setLogs] = useState<string[]>([]);
   const [isZipping, setIsZipping] = useState(false);
   const [isTranslating, setIsTranslating] = useState<string | null>(null);
@@ -91,6 +103,116 @@ const App: React.FC = () => {
     }
   };
 
+  const fetchImages = useCallback(async (page = 1) => {
+    try {
+      const offset = (page - 1) * pageSize;
+      const resp = await fetch(`/api/images?limit=${pageSize}&offset=${offset}`);
+      const data = await resp.json();
+      const list = (data?.images || []) as Array<any>;
+      
+      const loaded = list.map((it) => ({
+        id: String(it.id || crypto.randomUUID()),
+        url: String(it.thumbUrl || it.url || it.originalUrl || ''),
+        originalUrl: it.originalUrl ? String(it.originalUrl) : undefined,
+        category: String(it.category || 'default'),
+        prompt: String(it.prompt || it.filename || ''),
+        timestamp: Number(it.timestamp || Date.now()),
+        filename: it.filename ? String(it.filename) : undefined,
+      })) as GeneratedImage[];
+      
+      setImages(loaded);
+      setCurrentPage(page);
+    } catch (e) {
+      console.error("Failed to fetch images", e);
+    }
+  }, [pageSize]);
+
+  useEffect(() => {
+    let canceled = false;
+    fetchImages(1);
+    return () => { canceled = true; };
+  }, [fetchImages]);
+
+  const handleImageClick = (img: GeneratedImage) => {
+      // Open raw image in new tab
+      window.open(img.originalUrl || img.url, '_blank');
+  };
+
+  const toggleSelection = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const newSelected = new Set(selectedImages);
+    
+    if (e.shiftKey && lastSelectedId && newSelected.has(lastSelectedId)) {
+       // Range selection
+       const currentIndex = images.findIndex(img => img.id === id);
+       const lastIndex = images.findIndex(img => img.id === lastSelectedId);
+       
+       if (currentIndex !== -1 && lastIndex !== -1) {
+          const start = Math.min(currentIndex, lastIndex);
+          const end = Math.max(currentIndex, lastIndex);
+          const range = images.slice(start, end + 1);
+          range.forEach(img => newSelected.add(img.id));
+       } else {
+          newSelected.add(id);
+       }
+    } else {
+       if (newSelected.has(id)) {
+         newSelected.delete(id);
+       } else {
+         newSelected.add(id);
+       }
+    }
+    
+    setSelectedImages(newSelected);
+    setLastSelectedId(id);
+  };
+
+  const handleDownload = async () => {
+    if (selectedImages.size === 0) return;
+    setIsZipping(true);
+    try {
+       // Filter images from current view
+       const targets = images.filter(img => selectedImages.has(img.id)).map(img => img.filename).filter(Boolean);
+       
+       if (targets.length === 0) {
+           alert("未找到选中图片的文件信息 (可能已翻页?)");
+           setIsZipping(false);
+           return;
+       }
+
+       const resp = await fetch('/api/download', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ filenames: targets })
+       });
+       
+       if (!resp.ok) {
+          const err = await resp.json();
+          if (resp.status === 404) {
+             alert(`部分文件缺失: ${err.missing_files?.join(', ')}`);
+          } else {
+             alert(`打包失败: ${err.detail?.error || '未知错误'}`);
+          }
+          return;
+       }
+       
+       const data = await resp.json();
+       if (data.status === 'success' && data.url) {
+          const link = document.createElement('a');
+          link.href = data.url;
+          link.download = `images_打包_${Date.now()}.zip`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          addLog(`下载已启动: ${data.size}`);
+       }
+    } catch (e) {
+       console.error(e);
+       addLog("下载请求失败");
+    } finally {
+       setIsZipping(false);
+    }
+  };
   const handleCategoryClick = (cat: string) => {
     setEditingCategory(cat);
     setSelectedCategories(prev => {
@@ -117,42 +239,18 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownloadAll = async () => {
-    if (images.length === 0 || isZipping) return;
-    setIsZipping(true);
-    addLog(`准备打包 ${images.length} 张图片...`);
-    try {
-      const zip = new JSZip();
-      images.forEach((img, index) => {
-        const base64Data = img.url.split(',')[1];
-        const folder = zip.folder(img.category);
-        folder?.file(`${img.category}_${index}.png`, base64Data, { base64: true });
-      });
-      const content = await zip.generateAsync({ type: 'blob' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(content);
-      link.download = `Batch_Export_${Date.now()}.zip`;
-      link.click();
-      addLog('资源包已成功下载。');
-    } catch (error) {
-      addLog('下载失败。');
-    } finally {
-      setIsZipping(false);
-    }
-  };
-
   const startGeneration = useCallback(async () => {
     if (progress.status === 'running') return;
     const targetCategories = categories.filter(c => selectedCategories.has(c));
     if (targetCategories.length === 0) return addLog('请先选择分类。');
 
-    if (selectedModel.provider === 'google' && resolution !== '1K' && (window as any).aistudio) {
-      const hasKey = await (window as any).aistudio?.hasSelectedApiKey();
-      if (!hasKey) {
-        await (window as any).aistudio?.openSelectKey();
-        return;
-      }
-    }
+    // if (selectedModel.provider === 'google' && resolution !== '1K') {
+    //   const hasKey = await (window as any).aistudio?.hasSelectedApiKey();
+    //   if (!hasKey) {
+    //     await (window as any).aistudio?.openSelectKey();
+    //     return;
+    //   }
+    // }
 
     isStopping.current = false;
     const totalCount = targetCategories.length * countPerCategory;
@@ -171,10 +269,10 @@ const App: React.FC = () => {
             globalStyle, negativePrompt, aspectRatio, resolution, selectedModel
           );
           if (result) {
-            setImages(prev => [{
-              id: crypto.randomUUID(), url: result.url, category, prompt: result.prompt, timestamp: Date.now()
-            }, ...prev]);
+            // After successful generation, force refresh page 1 to show new images
+            // This ensures we see the latest thumbnails immediately
             addLog(`已完成: ${category} (${i + 1}/${countPerCategory})`);
+            await fetchImages(1);
           }
           count++;
         } catch (e) {
@@ -184,22 +282,52 @@ const App: React.FC = () => {
     }
     setProgress(prev => ({ ...prev, status: 'idle', category: null }));
     addLog('所有任务已完成。');
-  }, [categories, selectedCategories, commonSubject, globalStyle, negativePrompt, countPerCategory, catPrompts, aspectRatio, resolution, selectedModel, progress.status]);
+  }, [categories, selectedCategories, commonSubject, globalStyle, negativePrompt, countPerCategory, catPrompts, aspectRatio, resolution, selectedModel, progress.status, fetchImages]);
+
+  const handleSelectAll = () => {
+     if (selectedImages.size === images.length) {
+         setSelectedImages(new Set());
+     } else {
+         setSelectedImages(new Set(images.map(i => i.id)));
+     }
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#08090a] text-[#e3e4e6] font-sans">
-      <nav className="h-16 bg-[#141518] border-b border-[#2e3035] flex items-center px-6 justify-between shrink-0 z-50 shadow-xl">
-        <div className="flex items-center gap-4">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-600 rounded flex items-center justify-center font-black text-white">G</div>
+    <div className="flex flex-col h-screen text-gray-100 font-sans selection:bg-blue-500/30">
+      {/* Header */}
+      <header className="flex items-center justify-between px-6 py-4 bg-[#08090a] border-b border-gray-800">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-lg">G</div>
           <div>
-            <h1 className="text-xs font-bold uppercase tracking-widest text-white">Gemini Production</h1>
-            <p className="text-[8px] text-zinc-500 font-mono">MULTI-PROVIDER ENGINE V3.2</p>
+            <h1 className="text-sm font-bold tracking-wider">GEMINI PRODUCTION</h1>
+            <p className="text-[10px] text-gray-500 tracking-widest">MULTI-PROVIDER ENGINE V3.2</p>
           </div>
         </div>
-        <button onClick={handleDownloadAll} disabled={images.length === 0} className={`px-5 py-2 rounded-lg text-[11px] font-black uppercase border ${images.length === 0 ? 'border-zinc-800 text-zinc-700' : 'bg-red-600 text-white border-red-500'}`}>
-          打包下载 ({images.length})
-        </button>
-      </nav>
+        <div className="flex items-center gap-4">
+           {selectedImages.size > 0 && (
+              <span className="text-sm text-gray-400">已选 {selectedImages.size} 张</span>
+           )}
+           <button
+            onClick={handleDownload}
+            disabled={selectedImages.size === 0 || isZipping}
+            className={`px-4 py-2 rounded text-sm font-medium transition-all ${
+               selectedImages.size > 0 
+               ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-900/20' 
+               : 'bg-gray-800 text-gray-500 cursor-not-allowed opacity-50'
+            }`}
+          >
+            {isZipping ? (
+               <span className="flex items-center gap-2">
+                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                 </svg>
+                 打包中...
+               </span>
+            ) : `打包下载 (${selectedImages.size})`}
+          </button>
+        </div>
+      </header>
 
       <div className="flex-1 flex overflow-hidden">
         <aside className="w-[420px] bg-[#141518] border-r border-[#2e3035] flex flex-col shrink-0 z-40">
@@ -228,15 +356,24 @@ const App: React.FC = () => {
                   <label className="text-[9px] font-bold text-zinc-600 uppercase">比例</label>
                   <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as AspectRatio)} className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-[10px] outline-none">
                     <option value="16:9">16:9 (Cinematic)</option>
-                    <option value="9:16">9:16 (Vertical)</option>
+                    <option value="21:9">21:9 (Ultrawide)</option>
+                    <option value="3:2">3:2 (Landscape)</option>
+                    <option value="4:3">4:3 (TV)</option>
                     <option value="1:1">1:1 (Square)</option>
+                    <option value="3:4">3:4 (Portrait)</option>
+                    <option value="2:3">2:3 (Classic)</option>
+                    <option value="9:16">9:16 (Vertical)</option>
                   </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[9px] font-bold text-zinc-600 uppercase">画质 (Google)</label>
                   <select value={resolution} onChange={(e) => setResolution(e.target.value as Resolution)} className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-[10px] outline-none">
-                    <option value="1K">1K 标准</option>
-                    <option value="2K">2K 高清</option>
+                    <option value="360p">360p (SD)</option>
+                    <option value="480p">480p (SD)</option>
+                    <option value="720p">720p (HD)</option>
+                    <option value="1080p">1080p (Full HD)</option>
+                    <option value="2K">2K (QHD)</option>
+                    <option value="4K">4K (UHD)</option>
                   </select>
                 </div>
               </div>
@@ -331,17 +468,75 @@ const App: React.FC = () => {
           </div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto bg-[#08090a] p-10 custom-scrollbar">
-          {images.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center opacity-20">
-               <p className="text-xs font-black uppercase tracking-[1em]">Ready for Production</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {images.map(img => <ImageCard key={img.id} image={img} />)}
-            </div>
-          )}
-        </main>
+        <div className="flex-1 bg-black border border-gray-800 rounded-lg p-4 overflow-hidden flex flex-col m-6">
+          <div className="flex-1 overflow-y-auto min-h-0 grid grid-cols-4 gap-4 content-start pr-2">
+            {images.map((img) => (
+              <div 
+                key={img.id} 
+                className={`relative group aspect-video bg-gray-900 rounded-lg overflow-hidden border transition-all cursor-pointer ${
+                   selectedImages.has(img.id) ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-800 hover:border-gray-600'
+                }`}
+                onClick={() => handleImageClick(img)}
+              >
+                <img 
+                  src={img.url} 
+                  alt={img.prompt}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+                
+                {/* Checkbox Overlay */}
+                <div 
+                   className="absolute top-2 right-2 w-6 h-6 z-10"
+                   onClick={(e) => toggleSelection(e, img.id)}
+                >
+                   <div className={`w-full h-full rounded border flex items-center justify-center transition-colors ${
+                      selectedImages.has(img.id) 
+                      ? 'bg-blue-600 border-blue-500' 
+                      : 'bg-black/40 border-gray-400 hover:border-white'
+                   }`}>
+                      {selectedImages.has(img.id) && (
+                         <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                         </svg>
+                      )}
+                   </div>
+                </div>
+
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 pointer-events-none">
+                  <p className="text-xs text-gray-300 line-clamp-2 mb-1">{img.prompt}</p>
+                  <div className="flex justify-between items-center text-[10px] text-gray-500">
+                    <span>{new Date(img.timestamp).toLocaleTimeString()}</span>
+                    <span className="bg-gray-800 px-1 rounded">{img.category}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {/* Fill remaining slots to keep grid stable if < 20 */}
+            {Array.from({ length: Math.max(0, pageSize - images.length) }).map((_, i) => (
+               <div key={`empty-${i}`} className="aspect-video bg-gray-900/50 rounded-lg border border-gray-800/50 border-dashed" />
+            ))}
+          </div>
+          
+          {/* Pagination Controls */}
+          <div className="h-12 border-t border-gray-800 flex items-center justify-between px-2 mt-2 bg-[#08090a]">
+             <button 
+               onClick={() => fetchImages(Math.max(1, currentPage - 1))}
+               disabled={currentPage === 1}
+               className="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm text-gray-300 transition-colors"
+             >
+               上一页
+             </button>
+             <span className="text-gray-400 text-sm">第 {currentPage} 页</span>
+             <button 
+               onClick={() => fetchImages(currentPage + 1)}
+               disabled={images.length < pageSize} // Simple check for next page availability
+               className="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm text-gray-300 transition-colors"
+             >
+               下一页
+             </button>
+          </div>
+        </div>
       </div>
     </div>
   );

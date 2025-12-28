@@ -6,13 +6,14 @@
   },
   "models": {
     "qwen": "qwen-max",
-    "wan": "wan2.6-t2v",
-    "z_image": "qwen-image-plus"
+    "wan": "wan2.6-t2i",
+    "z_image": "z-image-turbo"
   },
   "endpoints": {
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     "z_image": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-    "wan": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    "wan": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    "wan_image": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
   },
   "storage": {
     "output_dir": "outputs"
