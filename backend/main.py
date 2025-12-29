@@ -16,7 +16,7 @@ from backend.config import load_settings, reload_settings, CONFIG_PATH, CONFIG_L
 from backend.services.background_task_service import start_job_dispatcher
 from backend.services.record_service import RecordService
 
-from backend.controllers import generate_router, health_router, images_router, models_router, translate_router, tasks_router, download_router
+from backend.controllers import generate_router, health_router, images_router, models_router, translate_router, tasks_router, download_router, db_router
 
 app = FastAPI()
 
@@ -87,3 +87,4 @@ app.include_router(generate_router)
 app.include_router(images_router)
 app.include_router(tasks_router)
 app.include_router(download_router)
+app.include_router(db_router)

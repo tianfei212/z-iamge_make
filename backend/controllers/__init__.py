@@ -12,6 +12,7 @@ from .models_controller import router as models_router
 from .translate_controller import router as translate_router
 from .tasks_controller import router as tasks_router
 from .download_controller import router as download_router
+from .db_controller import router as db_router
 
 __all__ = [
     "generate_router",
@@ -21,4 +22,5 @@ __all__ = [
     "translate_router",
     "tasks_router",
     "download_router",
+    "db_router",
 ]
