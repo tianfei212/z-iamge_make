@@ -12,6 +12,8 @@ from backend.models.generate_request_model import GenerateRequest
 from backend.services import DashScopeClient
 from backend.services.background_task_service import submit_job_request
 from backend.config import load_settings
+from backend.utils.validators import is_valid_uuid
+import uuid
 
 router = APIRouter()
 client = DashScopeClient()
@@ -125,14 +127,22 @@ def generate(req: GenerateRequest, request: Request):
 
     # Prepare Context for Background Job
     job_context = req.dict()
+    # Create job_id first
+    job_id = str(uuid.uuid4())
     # Attach user/session info and meta for record service
     user_id = request.headers.get("X-User-ID", "-1")
-    session_id = request.headers.get("X-Session-ID", "-1")
+    session_id_hdr = request.headers.get("X-Session-ID", None)
+    if session_id_hdr and is_valid_uuid(session_id_hdr):
+        session_id = session_id_hdr
+    else:
+        ns = uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
+        name = f"{user_id or '-1'}:{job_id}"
+        session_id = str(uuid.uuid5(ns, name))
     import datetime
     created_at = datetime.datetime.utcnow().strftime("%Y%m%d%H")
     job_context.update({
         "user_id": user_id or "-1",
-        "session_id": session_id or "-1",
+        "session_id": session_id,
         "created_at": created_at,
         "base_prompt": req.prompt,
         "category_prompt": req.category,
@@ -140,7 +150,6 @@ def generate(req: GenerateRequest, request: Request):
         "resolution": req.resolution,
         "model_name": req.model or "",
     })
-    job_id = str(uuid.uuid4())
     
     # Submit Job Request (Non-blocking)
     submit_job_request(job_id, job_context, _task_generator, _process_single_image)

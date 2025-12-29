@@ -11,10 +11,18 @@ import datetime
 from typing import Dict, Any, List, Optional
 
 from backend.models.record_models import RecordEntry, GeneratedItem
+from backend.services.db_service import DBService
 from backend.config import load_settings
 
 
 logger = logging.getLogger("record_service")
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setLevel(logging.DEBUG)
+    _f = logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+    _h.setFormatter(_f)
+    logger.addHandler(_h)
 perf_logger = logging.getLogger("record_perf")
 arch_logger = logging.getLogger("record_archiver")
 
@@ -98,6 +106,7 @@ class RecordService:
         self._writer_thread: Optional[threading.Thread] = None
         self._archiver_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._db = DBService()
 
     @classmethod
     def instance(cls) -> "RecordService":
@@ -128,7 +137,7 @@ class RecordService:
         self._started = False
         logger.info("RecordService stopped.")
 
-    def add_record(self, job_meta: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
+    def add_record(self, job_meta: Dict[str, Any], items: List[Dict[str, Any]], job_id: Optional[str] = None) -> None:
         try:
             entry = RecordEntry(
                 **{
@@ -153,6 +162,39 @@ class RecordService:
                 }
             )
             line = json.dumps(entry.dict(by_alias=True), ensure_ascii=False) + "\n"
+            import hashlib
+            content_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()
+            payload = {
+                "job_id": job_id,
+                "user_id": job_meta.get("user_id"),
+                "session_id": job_meta.get("session_id"),
+                "created_at": job_meta.get("created_at"),
+                "base_prompt": job_meta.get("prompt"),
+                "category_prompt": job_meta.get("category"),
+                "refined_positive": job_meta.get("refined_positive") or None,
+                "refined_negative": job_meta.get("refined_negative") or None,
+                "aspect_ratio": job_meta.get("aspect_ratio"),
+                "quality": job_meta.get("resolution"),
+                "count": job_meta.get("count", 1),
+                "model_name": job_meta.get("model") or "",
+                "status": "completed",
+                "item_count": 0,
+                "content_hash": content_hash,
+            }
+            try:
+                logger.debug(f"db write: payload={payload}")
+                rec = self._db.create_record(payload)
+                rid = rec.get("id")
+                if rid:
+                    rows = self._db.add_items(rid, items)
+                    try:
+                        cnt = self._db.get_items_count(rid)
+                        self._db.update_record(rid, {"item_count": cnt})
+                    except Exception:
+                        pass
+                    logger.debug(f"db write success: record_id={rid} items={len(items)}")
+            except Exception as e:
+                logger.error(f"db write failed: {e}")
             self._queue.put(line, block=True, timeout=5)
         except Exception as e:
             logger.error(f"add_record failed: {e}")
@@ -224,4 +266,3 @@ class RecordService:
 
     def verify(self, day: str) -> Dict[str, Any]:
         return self._backend.verify_day(day)
-

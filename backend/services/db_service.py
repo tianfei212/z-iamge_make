@@ -5,6 +5,12 @@ from backend.db.connection import init_db
 
 logger = logging.getLogger("db_service")
 logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setLevel(logging.DEBUG)
+    _f = logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+    _h.setFormatter(_f)
+    logger.addHandler(_h)
 
 init_db()
 
@@ -54,9 +60,11 @@ class DBService:
     def add_item(self, record_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
             logger.debug("存储数据库的内容: record_id=%s item=%s", record_id, payload)
-            iid = self.items.insert_unique(record_id, payload)
+            iid, inserted = self.items.insert_unique(record_id, payload)
+            if inserted:
+                self.records.increment_item_count(record_id, 1)
             row = self.items.get(record_id, iid) or {}
-            logger.debug("写入成功: item_id=%s", iid)
+            logger.debug("写入成功: item_id=%s inserted=%s", iid, inserted)
             return row
         except Exception as e:
             logger.error("写入失败: %s", e)
@@ -87,3 +95,47 @@ class DBService:
         except Exception as e:
             logger.error("写入失败: %s", e)
             raise
+
+    def add_items(self, record_id: int, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        try:
+            logger.debug("存储数据库的内容: record_id=%s items_count=%s", record_id, len(items))
+            ids, inserted_count = self.items.insert_many(record_id, items)
+            if inserted_count:
+                self.records.increment_item_count(record_id, inserted_count)
+            rows = [self.items.get(record_id, iid) or {} for iid in ids]
+            logger.debug("写入成功: items_inserted=%s", inserted_count)
+            return rows
+        except Exception as e:
+            logger.error("写入失败: %s", e)
+            raise
+
+    def update_record_by_job(self, job_id: str, patch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            logger.debug("存储数据库的内容: job_id=%s patch=%s", job_id, patch)
+            rid = self.records.update_by_job(job_id, patch)
+            if rid is None:
+                return None
+            rec = self.records.get(rid)
+            logger.debug("写入成功: id=%s", rid)
+            return rec or {}
+        except Exception as e:
+            logger.error("写入失败: %s", e)
+            raise
+
+    def get_items_count(self, record_id: int) -> int:
+        return self.items.count_by_record(record_id)
+
+    def validate_record_integrity(self, record_id: int) -> Dict[str, Any]:
+        rec = self.records.get(record_id)
+        if not rec:
+            return {"record_exists": False}
+        actual = self.items.count_by_record(record_id)
+        expected = int(rec.get("item_count") or 0)
+        ok = (actual == expected)
+        return {
+            "record_exists": True,
+            "record_id": record_id,
+            "expected_item_count": expected,
+            "actual_item_count": actual,
+            "valid": ok
+        }

@@ -65,6 +65,9 @@ class ItemCreate(BaseModel):
         if not is_absolute_path(self.absolute_path):
             raise HTTPException(status_code=422, detail="存储绝对路径必须为绝对路径")
 
+class ItemsBatch(BaseModel):
+    items: List[ItemCreate] = Field(default_factory=list)
+
 
 @router.post("/api/records", tags=["Records"])
 def create_record(body: RecordCreate):
@@ -108,6 +111,14 @@ def update_record(id: int, body: RecordUpdate):
     rec = svc.update_record(id, patch)
     return {"record": rec}
 
+@router.put("/api/records/by-job/{job_id}", tags=["Records"])
+def update_record_by_job(job_id: str, body: RecordUpdate):
+    patch = {k: v for k, v in body.dict().items() if v is not None}
+    rec = svc.update_record_by_job(job_id, patch)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"record": rec}
+
 
 @router.delete("/api/records/{id}", tags=["Records"])
 def delete_record(id: int):
@@ -120,6 +131,25 @@ def create_item(id: int, body: ItemCreate):
     body.validate_custom()
     item = svc.add_item(id, body.dict())
     return {"item": item}
+
+@router.post("/api/records/{id}/items/batch", tags=["Items"])
+def create_items_batch(id: int, body: ItemsBatch):
+    payloads = []
+    for it in body.items:
+        it.validate_custom()
+        payloads.append(it.dict())
+    rows = svc.add_items(id, payloads)
+    # normalize item_count to actual count
+    try:
+        cnt = svc.get_items_count(id)
+        svc.update_record(id, {"item_count": cnt})
+    except Exception:
+        pass
+    return {"items": rows, "count": len(rows)}
+
+@router.get("/api/records/{id}/validate", tags=["Records"])
+def validate_record(id: int):
+    return svc.validate_record_integrity(id)
 
 
 @router.get("/api/records/{id}/items", tags=["Items"])
@@ -149,4 +179,3 @@ def update_item(id: int, item_id: int, body: ItemCreate):
 def delete_item(id: int, item_id: int):
     svc.delete_item(id, item_id)
     return {"status": "ok"}
-

@@ -3,6 +3,7 @@ import re
 from urllib.parse import urlparse
 
 RATIO_RE = re.compile(r"^\d{1,3}:\d{1,3}$")
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[45][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
 def is_valid_ratio(value: str) -> bool:
@@ -30,3 +31,7 @@ def is_valid_relative_image_path(value: str) -> bool:
 def is_absolute_path(value: str) -> bool:
     return os.path.isabs(value.strip())
 
+
+def is_valid_uuid(value: str) -> bool:
+    v = value.strip()
+    return bool(UUID_RE.fullmatch(v))

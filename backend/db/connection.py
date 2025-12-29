@@ -13,6 +13,8 @@ def init_db():
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.executescript(
             """
+            DROP INDEX IF EXISTS uniq_items_rel_abs;
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_records_hash ON records(content_hash);
             CREATE TABLE IF NOT EXISTS records (
                 id INTEGER PRIMARY KEY,
                 job_id TEXT UNIQUE,
@@ -43,7 +45,7 @@ def init_db():
                 relative_url TEXT,
                 absolute_path TEXT
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS uniq_items_rel_abs ON items(record_id, relative_url, absolute_path);
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_items_seed_rel_abs ON items(record_id, seed, relative_url, absolute_path);
             CREATE INDEX IF NOT EXISTS idx_items_abs ON items(absolute_path);
             CREATE INDEX IF NOT EXISTS idx_items_rel ON items(relative_url);
             """
@@ -64,4 +66,3 @@ def get_conn():
         raise
     finally:
         conn.close()
-

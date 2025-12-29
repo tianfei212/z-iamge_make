@@ -247,7 +247,7 @@ def _execute_tasks_parallel(job_id: str, tasks: List[Dict[str, Any]], process_fu
             "model": model_name,
         }
         logger.info(f"Job {job_id} record items collected: {len(items)}")
-        RecordService.instance().add_record(job_meta, items)
+        RecordService.instance().add_record(job_meta, items, job_id=job_id)
     except Exception as e:
         logger.error(f"record write failed for job {job_id}: {e}")
 

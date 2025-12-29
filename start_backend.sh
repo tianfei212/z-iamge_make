@@ -79,9 +79,9 @@ if ! command -v uvicorn >/dev/null 2>&1; then
   exit 1
 fi
 
-info "启动后端服务 (uvicorn backend.main:app) ..."
+info "启动后端服务 (uvicorn backend.main:app --log-level debug) ..."
 set +e
-nohup uvicorn backend.main:app --host "${HOST}" --port "${PORT}" >> "${LOG_FILE}" 2>&1 &
+nohup uvicorn backend.main:app --host "${HOST}" --port "${PORT}" --log-level debug >> "${LOG_FILE}" 2>&1 &
 PID=$!
 set -e
 
@@ -92,4 +92,3 @@ else
   err "后端启动失败，请查看日志: ${LOG_FILE}"
   exit 2
 fi
-

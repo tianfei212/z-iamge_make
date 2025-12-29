@@ -8,19 +8,23 @@ class RecordsRepo:
             cur = conn.cursor()
             cur.execute(
                 """
-                INSERT INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,aspect_ratio,quality,count,model_name,status)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,aspect_ratio,quality,count,model_name,status,content_hash,item_count)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     user_id=excluded.user_id,
                     session_id=excluded.session_id,
                     created_at=excluded.created_at,
                     base_prompt=excluded.base_prompt,
                     category_prompt=excluded.category_prompt,
+                    refined_positive=excluded.refined_positive,
+                    refined_negative=excluded.refined_negative,
                     aspect_ratio=excluded.aspect_ratio,
                     quality=excluded.quality,
                     count=excluded.count,
                     model_name=excluded.model_name,
-                    status=excluded.status;
+                    status=excluded.status,
+                    content_hash=COALESCE(excluded.content_hash, records.content_hash),
+                    item_count=excluded.item_count;
                 """,
                 (
                     data.get("job_id"),
@@ -29,14 +33,21 @@ class RecordsRepo:
                     data.get("created_at"),
                     data.get("base_prompt"),
                     data.get("category_prompt"),
+                    data.get("refined_positive"),
+                    data.get("refined_negative"),
                     data.get("aspect_ratio"),
                     data.get("quality"),
                     data.get("count"),
                     data.get("model_name"),
                     data.get("status"),
+                    data.get("content_hash"),
+                    int(data.get("item_count") or 0),
                 ),
             )
-            cur.execute("SELECT id FROM records WHERE job_id=?", (data.get("job_id"),))
+            if data.get("content_hash"):
+                cur.execute("SELECT id FROM records WHERE content_hash=?", (data.get("content_hash"),))
+            else:
+                cur.execute("SELECT id FROM records WHERE job_id=?", (data.get("job_id"),))
             row = cur.fetchone()
             return int(row[0])
 
@@ -100,9 +111,33 @@ class RecordsRepo:
             cols = [c[0] for c in cur.description]
             return dict(zip(cols, row))
 
+    def increment_item_count(self, record_id: int, n: int) -> None:
+        with get_conn() as conn:
+            conn.execute("UPDATE records SET item_count=item_count+? WHERE id=?", (n, record_id))
+
+    def update_by_job(self, job_id: str, patch: Dict[str, Any]) -> Optional[int]:
+        if not patch:
+            return None
+        keys = []
+        vals: List[Any] = []
+        for k, v in patch.items():
+            keys.append(f"{k}=?")
+            vals.append(v)
+        sql = f"UPDATE records SET {', '.join(keys)} WHERE job_id=?"
+        vals.append(job_id)
+        with get_conn() as conn:
+            conn.execute(sql, tuple(vals))
+            cur = conn.execute("SELECT id FROM records WHERE job_id=?", (job_id,))
+            row = cur.fetchone()
+            return int(row[0]) if row else None
 
 class ItemsRepo:
-    def insert_unique(self, record_id: int, data: Dict[str, Any]) -> int:
+    def count_by_record(self, record_id: int) -> int:
+        with get_conn() as conn:
+            cur = conn.execute("SELECT COUNT(1) FROM items WHERE record_id=?", (record_id,))
+            row = cur.fetchone()
+            return int(row[0] or 0)
+    def insert_unique(self, record_id: int, data: Dict[str, Any]) -> Tuple[int, bool]:
         with get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -119,12 +154,43 @@ class ItemsRepo:
                     data.get("absolute_path"),
                 ),
             )
+            inserted = cur.rowcount == 1
             cur.execute(
-                "SELECT id FROM items WHERE record_id=? AND relative_url=? AND absolute_path=?",
-                (record_id, data.get("relative_url"), data.get("absolute_path")),
+                "SELECT id FROM items WHERE record_id=? AND seed=? AND relative_url=? AND absolute_path=?",
+                (record_id, data.get("seed"), data.get("relative_url"), data.get("absolute_path")),
             )
             row = cur.fetchone()
-            return int(row[0])
+            return int(row[0]), inserted
+
+    def insert_many(self, record_id: int, items: List[Dict[str, Any]]) -> Tuple[List[int], int]:
+        ids: List[int] = []
+        inserted_count = 0
+        with get_conn() as conn:
+            cur = conn.cursor()
+            for data in items:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO items(record_id,seed,temperature,top_p,relative_url,absolute_path)
+                    VALUES(?,?,?,?,?,?)
+                    """,
+                    (
+                        record_id,
+                        data.get("seed"),
+                        data.get("temperature"),
+                        data.get("top_p"),
+                        data.get("relative_url"),
+                        data.get("absolute_path"),
+                    ),
+                )
+                if cur.rowcount == 1:
+                    inserted_count += 1
+                cur.execute(
+                    "SELECT id FROM items WHERE record_id=? AND seed=? AND relative_url=? AND absolute_path=?",
+                    (record_id, data.get("seed"), data.get("relative_url"), data.get("absolute_path")),
+                )
+                row = cur.fetchone()
+                ids.append(int(row[0]))
+        return ids, inserted_count
 
     def get(self, record_id: int, item_id: int) -> Optional[Dict[str, Any]]:
         with get_conn() as conn:
@@ -160,4 +226,3 @@ class ItemsRepo:
     def delete(self, record_id: int, item_id: int) -> None:
         with get_conn() as conn:
             conn.execute("DELETE FROM items WHERE id=? AND record_id=?", (item_id, record_id))
-

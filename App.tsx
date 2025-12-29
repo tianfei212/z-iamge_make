@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Category, GeneratedImage, BatchProgress, AspectRatio, Resolution, ModelInfo } from './types';
 import { geminiService } from './services/geminiService';
 import { ImageCard } from './components/ImageCard';
@@ -41,7 +41,7 @@ const App: React.FC = () => {
   // but wait, geminiService.ts handles prompt assembly.
   // Let's check geminiService.ts next. 
   const [negativePrompt, setNegativePrompt] = useState('文字，水印，签名，模糊，重影，低对比度，畸形肢体');
-  const [countPerCategory, setCountPerCategory] = useState<number>(20);
+  const [countPerCategory, setCountPerCategory] = useState<number>(4);
 
   // Load default prompts from backend on mount
   useEffect(() => {
@@ -58,9 +58,15 @@ const App: React.FC = () => {
   
   const [selectedModel, setSelectedModel] = useState<ModelInfo>(MODELS[0]);
   const [categories, setCategories] = useState<string[]>(INITIAL_CATEGORIES);
-  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set(INITIAL_CATEGORIES));
-  const [editingCategory, setEditingCategory] = useState<string>(Category.PEOPLE);
+  const [selectedCategory, setSelectedCategory] = useState<string>(Category.ENVIRONMENT);
+  const [editingCategory, setEditingCategory] = useState<string>(Category.ENVIRONMENT);
   const [catPrompts, setCatPrompts] = useState<Record<string, string>>(INITIAL_PROMPTS);
+  const getMaxPerModel = (m: ModelInfo) => {
+    if (!m) return 4;
+    if (m.id === 'wan' || m.provider === 'aliyun') return 2;
+    return 4;
+  };
+  const currentMax = useMemo(() => getMaxPerModel(selectedModel), [selectedModel]);
   
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -132,6 +138,9 @@ const App: React.FC = () => {
     fetchImages(1);
     return () => { canceled = true; };
   }, [fetchImages]);
+  useEffect(() => {
+    setCountPerCategory(c => Math.max(1, Math.min(c, currentMax)));
+  }, [currentMax]);
 
   const handleImageClick = (img: GeneratedImage) => {
       // Open raw image in new tab
@@ -215,12 +224,7 @@ const App: React.FC = () => {
   };
   const handleCategoryClick = (cat: string) => {
     setEditingCategory(cat);
-    setSelectedCategories(prev => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
+    setSelectedCategory(cat);
   };
 
   const handleAddCustomCategory = () => {
@@ -232,7 +236,7 @@ const App: React.FC = () => {
         return;
       }
       setCategories(prev => [...prev, trimmedName]);
-      setSelectedCategories(prev => new Set(prev).add(trimmedName));
+      setSelectedCategory(trimmedName);
       setEditingCategory(trimmedName);
       setCatPrompts(prev => ({ ...prev, [trimmedName]: "" }));
       addLog(`已添加自定义分类: ${trimmedName}`);
@@ -241,8 +245,8 @@ const App: React.FC = () => {
 
   const startGeneration = useCallback(async () => {
     if (progress.status === 'running') return;
-    const targetCategories = categories.filter(c => selectedCategories.has(c));
-    if (targetCategories.length === 0) return addLog('请先选择分类。');
+    const targetCategory = selectedCategory;
+    if (!targetCategory) return addLog('请先选择分类。');
 
     // if (selectedModel.provider === 'google' && resolution !== '1K') {
     //   const hasKey = await (window as any).aistudio?.hasSelectedApiKey();
@@ -253,36 +257,28 @@ const App: React.FC = () => {
     // }
 
     isStopping.current = false;
-    const totalCount = targetCategories.length * countPerCategory;
-    setProgress({ total: totalCount, current: 0, category: null, status: 'running' });
-    addLog(`任务启动: ${selectedModel.name} | 总数: ${totalCount}`);
+    const cappedCount = Math.max(1, Math.min(countPerCategory, currentMax));
+    const totalCount = cappedCount;
+    setProgress({ total: totalCount, current: 0, category: targetCategory, status: 'running' });
+    addLog(`任务启动: ${selectedModel.name} | 分类: ${targetCategory} | 总数: ${totalCount} (上限${currentMax})`);
 
-    let count = 0;
-    for (const category of targetCategories) {
-      if (isStopping.current) break;
-      for (let i = 0; i < countPerCategory; i++) {
-        if (isStopping.current) break;
-        try {
-          setProgress(prev => ({ ...prev, category, current: count + 1 }));
-          const result = await geminiService.generateImage(
-            category, catPrompts[category] || "", commonSubject,
-            globalStyle, negativePrompt, aspectRatio, resolution, selectedModel
-          );
-          if (result) {
-            // After successful generation, force refresh page 1 to show new images
-            // This ensures we see the latest thumbnails immediately
-            addLog(`已完成: ${category} (${i + 1}/${countPerCategory})`);
-            await fetchImages(1);
-          }
-          count++;
-        } catch (e) {
-          addLog(`错误: ${category} 生成失败`);
-        }
+    try {
+      const result = await geminiService.generateImage(
+        targetCategory, catPrompts[targetCategory] || "", commonSubject,
+        globalStyle, negativePrompt, aspectRatio, resolution, selectedModel, cappedCount
+      );
+      const urlsLen = Array.isArray(result?.urls) ? result!.urls.length : 0;
+      if (result) {
+        addLog(`已完成: ${targetCategory} (${urlsLen}/${cappedCount})`);
+        await fetchImages(1);
       }
+      setProgress(prev => ({ ...prev, current: Math.min(urlsLen || cappedCount, totalCount), status: 'idle', category: null }));
+      addLog('所有任务已完成。');
+    } catch (e) {
+      addLog(`错误: ${targetCategory} 生成失败`);
+      setProgress(prev => ({ ...prev, status: 'idle', category: null }));
     }
-    setProgress(prev => ({ ...prev, status: 'idle', category: null }));
-    addLog('所有任务已完成。');
-  }, [categories, selectedCategories, commonSubject, globalStyle, negativePrompt, countPerCategory, catPrompts, aspectRatio, resolution, selectedModel, progress.status, fetchImages]);
+  }, [categories, selectedCategory, commonSubject, globalStyle, negativePrompt, countPerCategory, catPrompts, aspectRatio, resolution, selectedModel, progress.status, fetchImages, currentMax]);
 
   const handleSelectAll = () => {
      if (selectedImages.size === images.length) {
@@ -383,7 +379,7 @@ const App: React.FC = () => {
               <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block">生产分类</label>
               <div className="flex flex-wrap gap-1.5">
                 {categories.map(cat => (
-                  <button key={cat} onClick={() => handleCategoryClick(cat)} className={`px-3 py-1.5 text-[11px] font-bold rounded border transition-all ${selectedCategories.has(cat) ? 'bg-blue-600 text-white border-blue-400' : 'bg-zinc-800 text-zinc-500 border-transparent hover:bg-zinc-700'}`}>
+                  <button key={cat} onClick={() => handleCategoryClick(cat)} className={`px-3 py-1.5 text-[11px] font-bold rounded border transition-all ${selectedCategory === cat ? 'bg-blue-600 text-white border-blue-400' : 'bg-zinc-800 text-zinc-500 border-transparent hover:bg-zinc-700'}`}>
                     {cat}
                   </button>
                 ))}
@@ -419,21 +415,24 @@ const App: React.FC = () => {
             <div className="pt-4 border-t border-zinc-800 space-y-4">
               <div className="grid grid-cols-2 gap-4 items-end">
                 <div>
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-2">每类数量</label>
-                  <input type="number" value={countPerCategory} onChange={(e) => setCountPerCategory(parseInt(e.target.value) || 1)} className="w-full bg-black border border-zinc-800 rounded p-2 text-xs outline-none" />
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-2">每类数量 (上限{currentMax})</label>
+                  <input type="number" min={1} max={currentMax} value={countPerCategory} onChange={(e) => {
+                    const v = parseInt(e.target.value) || 1;
+                    setCountPerCategory(Math.max(1, Math.min(v, currentMax)));
+                  }} className="w-full bg-black border border-zinc-800 rounded p-2 text-xs outline-none" />
                 </div>
-                <div className="text-right text-[10px] font-black text-blue-400 uppercase">预计生成: {selectedCategories.size * countPerCategory} 张</div>
+                <div className="text-right text-[10px] font-black text-blue-400 uppercase">预计生成: {Math.max(1, Math.min(countPerCategory, currentMax))} 张</div>
               </div>
 
               <div className="space-y-3">
                 <button 
                   onClick={startGeneration} 
-                  disabled={progress.status === 'running' || selectedCategories.size === 0}
+                  disabled={progress.status === 'running' || !selectedCategory}
                   className={`w-full py-4 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
                     progress.status === 'running' ? 'bg-zinc-900 text-zinc-700' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20'
                   }`}
                 >
-                  {progress.status === 'running' ? '正在执行任务流...' : `启动批量生产 (已选 ${selectedCategories.size})`}
+                  {progress.status === 'running' ? '正在执行任务流...' : `启动批量生产 (已选 ${selectedCategory})`}
                 </button>
 
                 <div className="space-y-2">
@@ -457,7 +456,7 @@ const App: React.FC = () => {
 
                 {progress.status === 'running' && (
                   <button onClick={() => isStopping.current = true} className="w-full py-2 text-[10px] font-bold text-red-500 uppercase hover:text-red-400 transition-colors">
-                    紧急停止作业
+                    紧急停止作业（单选，最大{currentMax}张）
                   </button>
                 )}
               </div>
