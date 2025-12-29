@@ -67,11 +67,13 @@ class DashScopeClient:
         resp.raise_for_status()
         ext = guess_extension(url, resp.headers.get("Content-Type"))
         
-        # 生成的文件命名规则：模型_yyyymmddhh24miss_画质.类型
+        # 生成的文件命名规则：模型_yyyymmddhh24miss_ms_画质.类型（确保并发唯一）
         # prefix 传入的通常是模型类型 (wan 或 z_image)
         res_suffix = f"_{resolution}" if resolution else ""
-        timestamp_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
-        filename = f"{prefix}_{timestamp_str}{res_suffix}{ext}"
+        ts = time.time()
+        timestamp_str = time.strftime("%Y%m%d%H%M%S", time.localtime(ts))
+        ms = int((ts - int(ts)) * 1000)
+        filename = f"{prefix}_{timestamp_str}_{ms:03d}{res_suffix}{ext}"
         
         out_path = os.path.join(category_dir, filename)
         with open(out_path, "wb") as f:

@@ -8,7 +8,7 @@ import os
 import datetime
 
 
-QUALITY_ENUM = {"1K", "2K", "4K", "HD"}
+QUALITY_ENUM = {"360p", "720p", "1080p", "1K", "2K", "4K", "HD"}
 RATIO_PATTERN = re.compile(r"^\d{1,3}:\d{1,3}$")
 
 
@@ -110,4 +110,3 @@ class RecordEntry(BaseModel):
         if v not in allowed:
             raise ValueError("画质枚举值不合法")
         return v
-
