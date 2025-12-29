@@ -1,9 +1,15 @@
 
-import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Category, GeneratedImage, BatchProgress, AspectRatio, Resolution, ModelInfo } from './types';
 import { geminiService } from './services/geminiService';
-import { ImageCard } from './components/ImageCard';
 import JSZip from 'jszip';
+import { SettingsPage } from './pages/SettingsPage';
+import { GalleryPage } from './pages/GalleryPage';
+import { LogsPanel } from './pages/LogsPanel';
+import { IconButton } from './components/IconButton';
+import { Modal } from './components/Modal';
+import { t } from './i18n';
+import { ConfigManagement } from './pages/ConfigManagement';
 
 const MODELS: ModelInfo[] = [
   {
@@ -41,32 +47,80 @@ const App: React.FC = () => {
   // but wait, geminiService.ts handles prompt assembly.
   // Let's check geminiService.ts next. 
   const [negativePrompt, setNegativePrompt] = useState('文字，水印，签名，模糊，重影，低对比度，畸形肢体');
-  const [countPerCategory, setCountPerCategory] = useState<number>(4);
+  const [countPerCategory, setCountPerCategory] = useState<number>(20);
 
-  // Load default prompts from backend on mount
+  // Model selection and limits
+  const [selectedModel, setSelectedModel] = useState<ModelInfo>(MODELS[0]);
+  const [modelLimits, setModelLimits] = useState<Record<string, number>>({});
+  const currentLimit = modelLimits[selectedModel.modelName] ?? (selectedModel.provider === 'z_image' ? 4 : 2);
   useEffect(() => {
-    fetch('/api/config/prompts')
-      .then(res => res.json())
-      .then(data => {
-        if (data.default_style) setGlobalStyle(data.default_style);
-        if (data.default_negative_prompt) setNegativePrompt(data.default_negative_prompt);
-      })
-      .catch(console.error);
+    setCountPerCategory(prev => Math.max(1, Math.min(prev, currentLimit)));
+  }, [selectedModel, currentLimit]);
+  useEffect(() => {
+    (async () => {
+      try {
+        await fetch('/api/config/reload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'page_load' }) });
+        const r1 = await fetch('/api/config/runtime').then(r => r.json());
+        if (r1?.global) {
+          if (typeof r1.global.global_style === 'string') setGlobalStyle(r1.global.global_style);
+          if (typeof r1.global.negative_prompt === 'string') setNegativePrompt(r1.global.negative_prompt);
+          if (typeof r1.global.common_subject === 'string' && r1.global.common_subject) setCommonSubject(r1.global.common_subject);
+        }
+        if (Array.isArray(r1?.categories) && r1.categories.length > 0) {
+          setCategories(r1.categories);
+          const def = r1.categories.includes('环境') ? '环境' : r1.categories[0];
+          setSelectedCategories(new Set([def]));
+          setEditingCategory(def);
+        } else {
+          // fallback: keep INITIAL_CATEGORIES, default to 环境
+          const def = INITIAL_CATEGORIES.includes('环境') ? '环境' : INITIAL_CATEGORIES[0];
+          setSelectedCategories(new Set([def]));
+          setEditingCategory(def);
+        }
+        if (r1?.prompts && typeof r1.prompts === 'object') {
+          setCatPrompts(r1.prompts);
+        }
+      } catch (e) {
+        console.error(e);
+        // fallback defaults already set
+      }
+      try {
+        const r2 = await fetch('/api/config/limits').then(r => r.json());
+        if (r2?.model_limits && typeof r2.model_limits === 'object') {
+          setModelLimits(r2.model_limits);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F5' || e.keyCode === 116) {
+        try {
+          fetch('/api/config/reload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'key_f5' }), keepalive: true }).catch(() => {});
+        } catch {}
+      }
+    };
+    const onUnload = () => {
+      try {
+        const data = new Blob([JSON.stringify({ reason: 'before_unload' })], { type: 'application/json' });
+        navigator.sendBeacon('/api/config/reload', data);
+      } catch {}
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('beforeunload', onUnload);
+    };
   }, []);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [resolution, setResolution] = useState<Resolution>('1080p');
-  
-  const [selectedModel, setSelectedModel] = useState<ModelInfo>(MODELS[0]);
   const [categories, setCategories] = useState<string[]>(INITIAL_CATEGORIES);
-  const [selectedCategory, setSelectedCategory] = useState<string>(Category.ENVIRONMENT);
-  const [editingCategory, setEditingCategory] = useState<string>(Category.ENVIRONMENT);
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set(['环境']));
+  const [editingCategory, setEditingCategory] = useState<string>('环境');
   const [catPrompts, setCatPrompts] = useState<Record<string, string>>(INITIAL_PROMPTS);
-  const getMaxPerModel = (m: ModelInfo) => {
-    if (!m) return 4;
-    if (m.id === 'wan' || m.provider === 'aliyun') return 2;
-    return 4;
-  };
-  const currentMax = useMemo(() => getMaxPerModel(selectedModel), [selectedModel]);
   
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -138,9 +192,6 @@ const App: React.FC = () => {
     fetchImages(1);
     return () => { canceled = true; };
   }, [fetchImages]);
-  useEffect(() => {
-    setCountPerCategory(c => Math.max(1, Math.min(c, currentMax)));
-  }, [currentMax]);
 
   const handleImageClick = (img: GeneratedImage) => {
       // Open raw image in new tab
@@ -224,7 +275,7 @@ const App: React.FC = () => {
   };
   const handleCategoryClick = (cat: string) => {
     setEditingCategory(cat);
-    setSelectedCategory(cat);
+    setSelectedCategories(new Set([cat]));
   };
 
   const handleAddCustomCategory = () => {
@@ -236,7 +287,7 @@ const App: React.FC = () => {
         return;
       }
       setCategories(prev => [...prev, trimmedName]);
-      setSelectedCategory(trimmedName);
+      setSelectedCategories(new Set([trimmedName]));
       setEditingCategory(trimmedName);
       setCatPrompts(prev => ({ ...prev, [trimmedName]: "" }));
       addLog(`已添加自定义分类: ${trimmedName}`);
@@ -245,8 +296,8 @@ const App: React.FC = () => {
 
   const startGeneration = useCallback(async () => {
     if (progress.status === 'running') return;
-    const targetCategory = selectedCategory;
-    if (!targetCategory) return addLog('请先选择分类。');
+    const targetCategories = categories.filter(c => selectedCategories.has(c)).slice(0, 1);
+    if (targetCategories.length === 0) return addLog('请先选择分类。');
 
     // if (selectedModel.provider === 'google' && resolution !== '1K') {
     //   const hasKey = await (window as any).aistudio?.hasSelectedApiKey();
@@ -257,28 +308,36 @@ const App: React.FC = () => {
     // }
 
     isStopping.current = false;
-    const cappedCount = Math.max(1, Math.min(countPerCategory, currentMax));
-    const totalCount = cappedCount;
-    setProgress({ total: totalCount, current: 0, category: targetCategory, status: 'running' });
-    addLog(`任务启动: ${selectedModel.name} | 分类: ${targetCategory} | 总数: ${totalCount} (上限${currentMax})`);
+    const totalCount = targetCategories.length * Math.min(countPerCategory, currentLimit);
+    setProgress({ total: totalCount, current: 0, category: null, status: 'running' });
+    addLog(`任务启动: ${selectedModel.name} | 总数: ${totalCount}`);
 
-    try {
-      const result = await geminiService.generateImage(
-        targetCategory, catPrompts[targetCategory] || "", commonSubject,
-        globalStyle, negativePrompt, aspectRatio, resolution, selectedModel, cappedCount
-      );
-      const urlsLen = Array.isArray(result?.urls) ? result!.urls.length : 0;
-      if (result) {
-        addLog(`已完成: ${targetCategory} (${urlsLen}/${cappedCount})`);
-        await fetchImages(1);
+    let count = 0;
+    for (const category of targetCategories) {
+      if (isStopping.current) break;
+      for (let i = 0; i < Math.min(countPerCategory, currentLimit); i++) {
+        if (isStopping.current) break;
+        try {
+          setProgress(prev => ({ ...prev, category, current: count + 1 }));
+          const result = await geminiService.generateImage(
+            category, catPrompts[category] || "", commonSubject,
+            globalStyle, negativePrompt, aspectRatio, resolution, selectedModel
+          );
+          if (result) {
+            // After successful generation, force refresh page 1 to show new images
+            // This ensures we see the latest thumbnails immediately
+            addLog(`已完成: ${category} (${i + 1}/${countPerCategory})`);
+            await fetchImages(1);
+          }
+          count++;
+        } catch (e) {
+          addLog(`错误: ${category} 生成失败`);
+        }
       }
-      setProgress(prev => ({ ...prev, current: Math.min(urlsLen || cappedCount, totalCount), status: 'idle', category: null }));
-      addLog('所有任务已完成。');
-    } catch (e) {
-      addLog(`错误: ${targetCategory} 生成失败`);
-      setProgress(prev => ({ ...prev, status: 'idle', category: null }));
     }
-  }, [categories, selectedCategory, commonSubject, globalStyle, negativePrompt, countPerCategory, catPrompts, aspectRatio, resolution, selectedModel, progress.status, fetchImages, currentMax]);
+    setProgress(prev => ({ ...prev, status: 'idle', category: null }));
+    addLog('所有任务已完成。');
+  }, [categories, selectedCategories, commonSubject, globalStyle, negativePrompt, countPerCategory, catPrompts, aspectRatio, resolution, selectedModel, progress.status, fetchImages]);
 
   const handleSelectAll = () => {
      if (selectedImages.size === images.length) {
@@ -288,6 +347,8 @@ const App: React.FC = () => {
      }
   };
 
+  const [openFeatureModal, setOpenFeatureModal] = useState(false);
+
   return (
     <div className="flex flex-col h-screen text-gray-100 font-sans selection:bg-blue-500/30">
       {/* Header */}
@@ -295,11 +356,12 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-lg">G</div>
           <div>
-            <h1 className="text-sm font-bold tracking-wider">GEMINI PRODUCTION</h1>
-            <p className="text-[10px] text-gray-500 tracking-widest">MULTI-PROVIDER ENGINE V3.2</p>
+            <h1 className="text-sm font-bold tracking-wider">{t('app.title')}</h1>
+            <p className="text-[10px] text-gray-500 tracking-widest">{t('app.subtitle')}</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
+           <IconButton title="功能" onClick={() => setOpenFeatureModal(true)} />
            {selectedImages.size > 0 && (
               <span className="text-sm text-gray-400">已选 {selectedImages.size} 张</span>
            )}
@@ -328,215 +390,55 @@ const App: React.FC = () => {
       <div className="flex-1 flex overflow-hidden">
         <aside className="w-[420px] bg-[#141518] border-r border-[#2e3035] flex flex-col shrink-0 z-40">
           <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
-            <div className="space-y-4">
-              <div className="relative group">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-2">通用基础主体</label>
-                <div className="relative">
-                  <textarea value={commonSubject} onChange={(e) => setCommonSubject(e.target.value)} className="w-full bg-black border border-zinc-800 rounded-lg p-3 pr-10 text-xs min-h-[80px] focus:border-blue-500 outline-none transition-all resize-none shadow-inner" />
-                  <button 
-                    onClick={() => handleTranslate('common')}
-                    disabled={isTranslating === 'common'}
-                    className="absolute bottom-3 right-3 p-2 bg-zinc-800 hover:bg-blue-600 rounded-lg transition-all border border-zinc-700 hover:border-blue-400 group/btn"
-                    title="中英互译"
-                  >
-                    {isTranslating === 'common' ? (
-                      <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <span className="text-[10px] font-bold text-zinc-400 group-hover/btn:text-white">文/A</span>
-                    )}
-                  </button>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[9px] font-bold text-zinc-600 uppercase">比例</label>
-                  <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as AspectRatio)} className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-[10px] outline-none">
-                    <option value="16:9">16:9 (Cinematic)</option>
-                    <option value="21:9">21:9 (Ultrawide)</option>
-                    <option value="3:2">3:2 (Landscape)</option>
-                    <option value="4:3">4:3 (TV)</option>
-                    <option value="1:1">1:1 (Square)</option>
-                    <option value="3:4">3:4 (Portrait)</option>
-                    <option value="2:3">2:3 (Classic)</option>
-                    <option value="9:16">9:16 (Vertical)</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[9px] font-bold text-zinc-600 uppercase">画质 (Google)</label>
-                  <select value={resolution} onChange={(e) => setResolution(e.target.value as Resolution)} className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-[10px] outline-none">
-                    <option value="360p">360p (SD)</option>
-                    <option value="480p">480p (SD)</option>
-                    <option value="720p">720p (HD)</option>
-                    <option value="1080p">1080p (Full HD)</option>
-                    <option value="2K">2K (QHD)</option>
-                    <option value="4K">4K (UHD)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block">生产分类</label>
-              <div className="flex flex-wrap gap-1.5">
-                {categories.map(cat => (
-                  <button key={cat} onClick={() => handleCategoryClick(cat)} className={`px-3 py-1.5 text-[11px] font-bold rounded border transition-all ${selectedCategory === cat ? 'bg-blue-600 text-white border-blue-400' : 'bg-zinc-800 text-zinc-500 border-transparent hover:bg-zinc-700'}`}>
-                    {cat}
-                  </button>
-                ))}
-                <button 
-                  onClick={handleAddCustomCategory} 
-                  className="px-3 py-1.5 text-[11px] font-black rounded border border-dashed border-zinc-700 text-zinc-500 hover:border-blue-500 hover:text-blue-400 transition-all bg-transparent"
-                >
-                  + 自定义
-                </button>
-              </div>
-              <div className="relative">
-                <textarea 
-                  value={catPrompts[editingCategory] || ""} 
-                  onChange={(e) => setCatPrompts({...catPrompts, [editingCategory]: e.target.value})} 
-                  className="w-full bg-black border border-zinc-800 rounded-lg p-3 pr-10 text-xs min-h-[100px] outline-none transition-all focus:border-blue-500" 
-                  placeholder={`编辑 ${editingCategory} 描述...`} 
-                />
-                <button 
-                  onClick={() => handleTranslate('category')}
-                  disabled={isTranslating === 'category'}
-                  className="absolute bottom-3 right-3 p-2 bg-zinc-800 hover:bg-blue-600 rounded-lg transition-all border border-zinc-700 hover:border-blue-400 group/btn"
-                  title="中英互译"
-                >
-                  {isTranslating === 'category' ? (
-                    <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <span className="text-[10px] font-bold text-zinc-400 group-hover/btn:text-white">文/A</span>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-zinc-800 space-y-4">
-              <div className="grid grid-cols-2 gap-4 items-end">
-                <div>
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-2">每类数量 (上限{currentMax})</label>
-                  <input type="number" min={1} max={currentMax} value={countPerCategory} onChange={(e) => {
-                    const v = parseInt(e.target.value) || 1;
-                    setCountPerCategory(Math.max(1, Math.min(v, currentMax)));
-                  }} className="w-full bg-black border border-zinc-800 rounded p-2 text-xs outline-none" />
-                </div>
-                <div className="text-right text-[10px] font-black text-blue-400 uppercase">预计生成: {Math.max(1, Math.min(countPerCategory, currentMax))} 张</div>
-              </div>
-
-              <div className="space-y-3">
-                <button 
-                  onClick={startGeneration} 
-                  disabled={progress.status === 'running' || !selectedCategory}
-                  className={`w-full py-4 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                    progress.status === 'running' ? 'bg-zinc-900 text-zinc-700' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20'
-                  }`}
-                >
-                  {progress.status === 'running' ? '正在执行任务流...' : `启动批量生产 (已选 ${selectedCategory})`}
-                </button>
-
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-zinc-500 uppercase tracking-tighter block text-center">AI 模型选择 (Model Selection)</label>
-                  <div className="relative group">
-                    <select 
-                      value={selectedModel.id} 
-                      onChange={(e) => setSelectedModel(MODELS.find(m => m.id === e.target.value) || MODELS[0])}
-                      className="w-full appearance-none bg-[#1a1c20] border border-zinc-800 group-hover:border-blue-500/50 rounded-lg px-4 py-3 text-[11px] font-mono font-bold text-zinc-300 outline-none transition-all cursor-pointer shadow-xl"
-                    >
-                      {MODELS.map(m => (
-                        <option key={m.id} value={m.id}>[{m.provider.toUpperCase()}] {m.name}</option>
-                      ))}
-                    </select>
-                    <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-zinc-600 group-hover:text-blue-400">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"></path></svg>
-                    </div>
-                  </div>
-                  <p className="text-[9px] text-zinc-600 text-center font-medium italic">{selectedModel.description}</p>
-                </div>
-
-                {progress.status === 'running' && (
-                  <button onClick={() => isStopping.current = true} className="w-full py-2 text-[10px] font-bold text-red-500 uppercase hover:text-red-400 transition-colors">
-                    紧急停止作业（单选，最大{currentMax}张）
-                  </button>
-                )}
-              </div>
-            </div>
+            <SettingsPage
+              commonSubject={commonSubject}
+              setCommonSubject={setCommonSubject}
+              aspectRatio={aspectRatio}
+              setAspectRatio={setAspectRatio}
+              resolution={resolution}
+              setResolution={setResolution}
+              categories={categories}
+              selectedCategories={selectedCategories}
+              editingCategory={editingCategory}
+              setEditingCategory={setEditingCategory}
+              catPrompts={catPrompts}
+              setCatPrompts={(next) => setCatPrompts(next)}
+              handleCategoryClick={handleCategoryClick}
+              handleAddCustomCategory={handleAddCustomCategory}
+              handleTranslate={handleTranslate}
+              isTranslating={isTranslating}
+              countPerCategory={countPerCategory}
+              setCountPerCategory={(n) => setCountPerCategory(Math.max(1, Math.min(n, currentLimit)))}
+              modelLimit={currentLimit}
+              startGeneration={() => startGeneration()}
+              progressStatus={progress.status}
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              models={MODELS}
+              stopNow={() => { isStopping.current = true; }}
+            />
           </div>
-          <div className="h-32 border-t border-zinc-800 bg-black/40 p-4 font-mono text-[9px] overflow-y-auto custom-scrollbar text-zinc-500">
-            {logs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
-          </div>
+          <LogsPanel logs={logs} />
         </aside>
 
-        <div className="flex-1 bg-black border border-gray-800 rounded-lg p-4 overflow-hidden flex flex-col m-6">
-          <div className="flex-1 overflow-y-auto min-h-0 grid grid-cols-4 gap-4 content-start pr-2">
-            {images.map((img) => (
-              <div 
-                key={img.id} 
-                className={`relative group aspect-video bg-gray-900 rounded-lg overflow-hidden border transition-all cursor-pointer ${
-                   selectedImages.has(img.id) ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-800 hover:border-gray-600'
-                }`}
-                onClick={() => handleImageClick(img)}
-              >
-                <img 
-                  src={img.url} 
-                  alt={img.prompt}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                />
-                
-                {/* Checkbox Overlay */}
-                <div 
-                   className="absolute top-2 right-2 w-6 h-6 z-10"
-                   onClick={(e) => toggleSelection(e, img.id)}
-                >
-                   <div className={`w-full h-full rounded border flex items-center justify-center transition-colors ${
-                      selectedImages.has(img.id) 
-                      ? 'bg-blue-600 border-blue-500' 
-                      : 'bg-black/40 border-gray-400 hover:border-white'
-                   }`}>
-                      {selectedImages.has(img.id) && (
-                         <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                         </svg>
-                      )}
-                   </div>
-                </div>
-
-                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 pointer-events-none">
-                  <p className="text-xs text-gray-300 line-clamp-2 mb-1">{img.prompt}</p>
-                  <div className="flex justify-between items-center text-[10px] text-gray-500">
-                    <span>{new Date(img.timestamp).toLocaleTimeString()}</span>
-                    <span className="bg-gray-800 px-1 rounded">{img.category}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {/* Fill remaining slots to keep grid stable if < 20 */}
-            {Array.from({ length: Math.max(0, pageSize - images.length) }).map((_, i) => (
-               <div key={`empty-${i}`} className="aspect-video bg-gray-900/50 rounded-lg border border-gray-800/50 border-dashed" />
-            ))}
-          </div>
-          
-          {/* Pagination Controls */}
-          <div className="h-12 border-t border-gray-800 flex items-center justify-between px-2 mt-2 bg-[#08090a]">
-             <button 
-               onClick={() => fetchImages(Math.max(1, currentPage - 1))}
-               disabled={currentPage === 1}
-               className="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm text-gray-300 transition-colors"
-             >
-               上一页
-             </button>
-             <span className="text-gray-400 text-sm">第 {currentPage} 页</span>
-             <button 
-               onClick={() => fetchImages(currentPage + 1)}
-               disabled={images.length < pageSize} // Simple check for next page availability
-               className="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm text-gray-300 transition-colors"
-             >
-               下一页
-             </button>
-          </div>
-        </div>
+        <GalleryPage
+          images={images}
+          pageSize={pageSize}
+          currentPage={currentPage}
+          fetchImages={(p) => fetchImages(p)}
+          selectedImages={selectedImages}
+          toggleSelection={toggleSelection}
+          handleImageClick={handleImageClick}
+        />
       </div>
+
+      <Modal
+        open={openFeatureModal}
+        onClose={() => setOpenFeatureModal(false)}
+        title={undefined}
+      >
+        <ConfigManagement />
+      </Modal>
     </div>
   );
 };

@@ -1,4 +1,5 @@
 {
+  "operation_mode": "config_file",
   "api_keys": {
     "dashscope": "",
     "z_image": "",
@@ -17,5 +18,45 @@
   },
   "storage": {
     "output_dir": "outputs"
+  },
+  "models_list": [
+    {
+      "id": "wan",
+      "name": "Aliyun Wan 2.6",
+      "provider": "aliyun",
+      "model_name": "wan2.6-t2i",
+      "description": "Aliyun Wan text-to-image",
+      "enabled": 1
+    },
+    {
+      "id": "z_image",
+      "name": "Z-Image Turbo",
+      "provider": "z_image",
+      "model_name": "z-image-turbo",
+      "description": "High-speed image generation",
+      "enabled": 1
+    }
+  ],
+  "categories": ["人物","动物","机械","植物","火焰","建筑","环境"],
+  "prompts_map": {
+    "人物": "特写肖像，动态姿势，服饰质感极其写实",
+    "动物": "自然栖息地中的生物，极具张力的动作瞬间",
+    "机械": "复杂的内部结构外露，蓝图感与实物结合",
+    "植物": "带有魔幻感的植物形态，微观纹理与生物发光",
+    "火焰": "不同色温混合的火焰，粒子飞溅与烟雾效果",
+    "建筑": "未来主义建筑，几何空间，冷淡材质",
+    "环境": "宏大的地貌景观，史诗感的大气效果"
+  },
+  "global": {
+    "common_subject": "未来主义科技都市，雨夜，霓虹灯光",
+    "global_style": "电影级写实摄影，极高动态范围，徕卡色调",
+    "negative_prompt": "文字，水印，签名，模糊，重影，低对比度，畸形肢体"
+  },
+  "docs": {
+    "operation_mode": "database 或 config_file；database 模式优先从 SQLite 读取，异常或空回退到 config_file",
+    "models_list": "模型数组，字段：id、name、provider、model_name、description、enabled(0/1)",
+    "categories": "分类名称数组",
+    "prompts_map": "分类到提示词的映射",
+    "global": "通用主体、风格与负面提示词的默认值"
   }
 }

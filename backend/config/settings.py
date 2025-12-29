@@ -42,6 +42,13 @@ class Settings:
     raw: Dict[str, Any]
 
     @property
+    def operation_mode(self) -> str:
+        value = self.raw.get("operation_mode", "config_file")
+        if isinstance(value, str) and value in {"database", "config_file"}:
+            return value
+        return "config_file"
+
+    @property
     def endpoints(self) -> Dict[str, str]:
         value = self.raw.get("endpoints", {})
         return value if isinstance(value, dict) else {}
@@ -155,6 +162,11 @@ def reload_settings(
             if not isinstance(merged, dict):
                  raise ValueError("Config root must be a dictionary")
             
+            op = merged.get("operation_mode", "config_file")
+            if op not in {"database", "config_file"}:
+                logger.warning("Invalid operation_mode, fallback to config_file")
+                merged["operation_mode"] = "config_file"
+            
             # 2. Hash Check
             # Sort keys to ensure consistent hash for same content
             new_hash = hashlib.md5(json.dumps(merged, sort_keys=True).encode("utf-8")).hexdigest()
@@ -186,11 +198,11 @@ def reload_settings(
                 
     return _CACHED_SETTINGS
 
-def load_settings() -> Settings:
+def load_settings(base_path: str = CONFIG_PATH, local_path: str = CONFIG_LOCAL_PATH, example_path: str = CONFIG_EXAMPLE_PATH) -> Settings:
     """
     Get current settings. Lazy loads on first call.
     Subsequent reloads are handled by the file watcher calling reload_settings().
     """
-    if _CACHED_SETTINGS is None:
-        return reload_settings()
+    if _CACHED_SETTINGS is None or any([base_path != CONFIG_PATH, local_path != CONFIG_LOCAL_PATH, example_path != CONFIG_EXAMPLE_PATH]):
+        return reload_settings(base_path=base_path, local_path=local_path, example_path=example_path)
     return _CACHED_SETTINGS

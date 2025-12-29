@@ -14,6 +14,9 @@ from .tasks_controller import router as tasks_router
 from .download_controller import router as download_router
 from .db_controller import router as db_router
 from .ingest_controller import router as ingest_router
+from .categories_controller import router as categories_router
+from .prompts_controller import router as prompts_router
+from .config_controller import router as config_router
 
 __all__ = [
     "generate_router",
@@ -25,4 +28,7 @@ __all__ = [
     "download_router",
     "db_router",
     "ingest_router",
+    "categories_router",
+    "prompts_router",
+    "config_router",
 ]

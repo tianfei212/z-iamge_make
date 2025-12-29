@@ -16,6 +16,7 @@ from watchdog.events import FileSystemEventHandler
 from backend.config import load_settings, reload_settings, CONFIG_PATH, CONFIG_LOCAL_PATH
 from backend.services.background_task_service import start_job_dispatcher
 from backend.services.record_service import RecordService
+from backend.db.connection import init_db
 
 from backend.controllers import generate_router, health_router, images_router, models_router, translate_router, tasks_router, download_router, db_router, ingest_router
 
@@ -41,6 +42,10 @@ _observer = None
 @app.on_event("startup")
 async def startup_event():
     global _observer
+    try:
+        init_db()
+    except Exception as e:
+        print(f"Failed to init db: {e}")
     # Start job dispatcher in background
     start_job_dispatcher()
     # Start record service
@@ -91,3 +96,7 @@ app.include_router(tasks_router)
 app.include_router(download_router)
 app.include_router(db_router)
 app.include_router(ingest_router)
+from backend.controllers import categories_router, prompts_router, config_router
+app.include_router(categories_router)
+app.include_router(prompts_router)
+app.include_router(config_router)

@@ -48,8 +48,54 @@ def init_db():
             CREATE UNIQUE INDEX IF NOT EXISTS uniq_items_seed_rel_abs ON items(record_id, seed, relative_url, absolute_path);
             CREATE INDEX IF NOT EXISTS idx_items_abs ON items(absolute_path);
             CREATE INDEX IF NOT EXISTS idx_items_rel ON items(relative_url);
+
+            CREATE TABLE IF NOT EXISTS models (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                description TEXT,
+                enabled INTEGER DEFAULT 1,
+                max_limit INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_models_provider ON models(provider);
+            CREATE INDEX IF NOT EXISTS idx_models_enabled ON models(enabled);
+
+            CREATE TABLE IF NOT EXISTS categories (
+                name TEXT PRIMARY KEY
+            );
+
+            CREATE TABLE IF NOT EXISTS prompts (
+                category TEXT PRIMARY KEY REFERENCES categories(name) ON DELETE CASCADE,
+                prompt TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS global_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                common_subject TEXT,
+                global_style TEXT,
+                negative_prompt TEXT
+            );
             """
         )
+    finally:
+        conn.close()
+
+    # Add missing columns for migrations
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cur = conn.execute("PRAGMA table_info(models)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "max_limit" not in cols:
+            conn.execute("ALTER TABLE models ADD COLUMN max_limit INTEGER DEFAULT 0")
+            conn.commit()
+        # migrate old 'limit' column if exists
+        if "limit" in cols and "max_limit" in cols:
+            try:
+                conn.execute("UPDATE models SET max_limit = COALESCE(max_limit, limit)")
+                conn.commit()
+            except Exception:
+                pass
     finally:
         conn.close()
 
