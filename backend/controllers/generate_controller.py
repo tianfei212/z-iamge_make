@@ -5,7 +5,7 @@
  */
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 import uuid
 import random
 from backend.models.generate_request_model import GenerateRequest
@@ -74,6 +74,8 @@ def _task_generator(context: dict):
             "seed": seed,
             "temperature": temperature,
             "top_p": top_p,
+            "refined_positive": final_positive_prompt,
+            "refined_negative": final_negative_prompt,
         }
         tasks.append(task_params)
     return tasks
@@ -113,7 +115,7 @@ def _process_single_image(params):
 
 
 @router.post("/api/generate")
-def generate(req: GenerateRequest):
+def generate(req: GenerateRequest, request: Request):
     # Log the incoming request
     print(f"Generate Request: Prompt='{req.prompt}', Count={req.count}, Service={req.service}...")
 
@@ -123,6 +125,21 @@ def generate(req: GenerateRequest):
 
     # Prepare Context for Background Job
     job_context = req.dict()
+    # Attach user/session info and meta for record service
+    user_id = request.headers.get("X-User-ID", "-1")
+    session_id = request.headers.get("X-Session-ID", "-1")
+    import datetime
+    created_at = datetime.datetime.utcnow().strftime("%Y%m%d%H")
+    job_context.update({
+        "user_id": user_id or "-1",
+        "session_id": session_id or "-1",
+        "created_at": created_at,
+        "base_prompt": req.prompt,
+        "category_prompt": req.category,
+        "aspect_ratio": req.aspect_ratio,
+        "resolution": req.resolution,
+        "model_name": req.model or "",
+    })
     job_id = str(uuid.uuid4())
     
     # Submit Job Request (Non-blocking)

@@ -1,4 +1,5 @@
 import concurrent.futures
+import os
 import uuid
 import time
 import logging
@@ -97,7 +98,7 @@ def _process_job_lifecycle(job_id: str, context: Dict[str, Any], generator_func:
                 _TASK_STORE[job_id].status = "running"
 
         # 3. Execute Tasks in Parallel
-        _execute_tasks_parallel(job_id, tasks, process_func)
+        _execute_tasks_parallel(job_id, tasks, process_func, context)
         
     except Exception as e:
         logger.error(f"Job {job_id} failed during lifecycle: {e}")
@@ -106,7 +107,7 @@ def _process_job_lifecycle(job_id: str, context: Dict[str, Any], generator_func:
                 _TASK_STORE[job_id].status = "failed"
                 _TASK_STORE[job_id].results = [{"status": "failed", "message": str(e)}]
 
-def _execute_tasks_parallel(job_id: str, tasks: List[Dict[str, Any]], process_func):
+def _execute_tasks_parallel(job_id: str, tasks: List[Dict[str, Any]], process_func, context: Dict[str, Any]):
     """
     Execute list of tasks using appropriate executor.
     """
@@ -153,6 +154,102 @@ def _execute_tasks_parallel(job_id: str, tasks: List[Dict[str, Any]], process_fu
             task_status.status = "completed"
  
     logger.info(f"Job {job_id} completed. Success: {completed_count}/{len(tasks)}")
+    try:
+        # Assemble record items and meta
+        from backend.services.record_service import RecordService
+        # Prefer refined prompts from first task
+        refined_pos = None
+        refined_neg = None
+        if tasks:
+            t0 = tasks[0]
+            service0 = t0.get("service")
+            refined_pos = t0.get("refined_positive") or t0.get("prompt")
+            refined_neg = t0.get("refined_negative") or t0.get("negative_prompt") or ""
+        # resolve model name
+        from backend.config import load_settings
+        settings = load_settings()
+        default_model = ""
+        if tasks:
+            if service0 == "wan":
+                default_model = settings.models.get("wan", "wan2.6-t2i")
+            elif service0 == "z_image":
+                default_model = settings.models.get("z_image", "z-image-turbo")
+        model_name = tasks[0].get("model") if tasks else ""
+        if not model_name:
+            model_name = default_model
+        items = []
+        from backend.utils import decode_image_id, encode_image_id, safe_dir_name, safe_join
+        out_dir = load_settings().output_dir
+        for t, r in zip(tasks, results):
+            if not isinstance(r, dict) or r.get("status") != "success":
+                continue
+            rel_url = r.get("originalUrl") or r.get("url")
+            saved_path = r.get("saved_path")
+            abs_path = saved_path
+            if (not abs_path) and isinstance(rel_url, str) and rel_url.startswith("/api/images/"):
+                try:
+                    # extract image_id
+                    parts = rel_url.split("/")
+                    image_id = parts[3] if len(parts) >= 4 else ""
+                    rel = decode_image_id(image_id)
+                    if rel:
+                        path_calc = safe_join(out_dir, rel)
+                        if path_calc:
+                            abs_path = path_calc
+                except Exception:
+                    pass
+            if rel_url and abs_path:
+                items.append({
+                    "seed": t.get("seed"),
+                    "temperature": t.get("temperature"),
+                    "top_p": t.get("top_p"),
+                    "relative_url": rel_url,
+                    "absolute_path": abs_path,
+                })
+        if not items:
+            try:
+                # Fallback: scan output directory for latest files in category
+                cat = safe_dir_name(context.get("category", "default"))
+                cat_dir = os.path.join(os.path.abspath(out_dir), cat)
+                if os.path.isdir(cat_dir):
+                    files = [
+                        os.path.join(cat_dir, f)
+                        for f in os.listdir(cat_dir)
+                        if os.path.isfile(os.path.join(cat_dir, f)) and not f.startswith(".")
+                    ]
+                    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                    take = min(len(tasks), len(files))
+                    for i in range(take):
+                        p = files[i]
+                        rel = f"{cat}/{os.path.basename(p)}"
+                        image_id = encode_image_id(rel)
+                        rel_url = f"/api/images/{image_id}/raw"
+                        items.append({
+                            "seed": tasks[i].get("seed"),
+                            "temperature": tasks[i].get("temperature"),
+                            "top_p": tasks[i].get("top_p"),
+                            "relative_url": rel_url,
+                            "absolute_path": p,
+                        })
+            except Exception as e:
+                logger.error(f"fallback collect images failed for job {job_id}: {e}")
+        job_meta = {
+            "user_id": context.get("user_id"),
+            "session_id": context.get("session_id"),
+            "created_at": context.get("created_at"),
+            "prompt": context.get("prompt"),
+            "category": context.get("category"),
+            "refined_positive": refined_pos or "",
+            "refined_negative": refined_neg or "",
+            "aspect_ratio": context.get("aspect_ratio"),
+            "resolution": context.get("resolution"),
+            "count": context.get("count", len(tasks)),
+            "model": model_name,
+        }
+        logger.info(f"Job {job_id} record items collected: {len(items)}")
+        RecordService.instance().add_record(job_meta, items)
+    except Exception as e:
+        logger.error(f"record write failed for job {job_id}: {e}")
 
 # Deprecated: Old submit_job for compatibility if needed, but we will replace usages
 def submit_job(job_id: str, tasks: List[Dict[str, Any]], process_func) -> None:

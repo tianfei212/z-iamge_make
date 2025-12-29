@@ -135,12 +135,8 @@ class DashScopeClient:
         Uses Qwen to refine the prompt and generate a negative prompt.
         Uses in-memory cache to avoid redundant calls.
         """
-        if not role:
-            # Fallback if no role is configured
-            return {"positive_prompt": prompt, "negative_prompt": default_negative_prompt}
-
         # Check Cache
-        cache_key = (prompt, category, default_style, default_negative_prompt, role)
+        cache_key = (prompt, category, default_style, default_negative_prompt, role or "")
         now = time.time()
         
         with self._cache_lock:
@@ -412,4 +408,3 @@ Output Format (Strict JSON):
         if isinstance(url, str) and url:
             return {"status": "success", "url": url}
         return result
-

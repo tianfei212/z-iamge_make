@@ -14,6 +14,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from backend.config import load_settings, reload_settings, CONFIG_PATH, CONFIG_LOCAL_PATH
 from backend.services.background_task_service import start_job_dispatcher
+from backend.services.record_service import RecordService
 
 from backend.controllers import generate_router, health_router, images_router, models_router, translate_router, tasks_router, download_router
 
@@ -40,6 +41,11 @@ async def startup_event():
     global _observer
     # Start job dispatcher in background
     start_job_dispatcher()
+    # Start record service
+    try:
+        RecordService.instance().start()
+    except Exception as e:
+        print(f"Failed to start record service: {e}")
     # Start Watchdog Observer
     try:
         event_handler = ConfigEventHandler()
@@ -61,6 +67,10 @@ async def shutdown_event():
     if _observer:
         _observer.stop()
         _observer.join()
+    try:
+        RecordService.instance().shutdown()
+    except Exception as e:
+        print(f"Failed to stop record service: {e}")
 
 app.add_middleware(
     CORSMiddleware,
