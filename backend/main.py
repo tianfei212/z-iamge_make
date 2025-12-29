@@ -7,6 +7,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 import threading
 import time
 import os
@@ -19,6 +20,7 @@ from backend.services.record_service import RecordService
 from backend.controllers import generate_router, health_router, images_router, models_router, translate_router, tasks_router, download_router, db_router
 
 app = FastAPI()
+logging.basicConfig(level=logging.DEBUG)
 
 class ConfigEventHandler(FileSystemEventHandler):
     """Handler for config file changes"""
