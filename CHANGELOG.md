@@ -28,3 +28,10 @@
 - 修复：模型生成图片数量的上限设置
   - 后端：持久化模型上限到数据库 models.max_limit，并提供 GET /api/config/limits、POST /api/config/update（兼容别名在 models_controller）
   - 前端：获取/保存上限支持降级与容错，数量输入与批量生成严格夹取当前模型上限
+
+## v2.3.3 - 2025-12-29
+- 新增：图片详情视图支持正向/反向提示词展示与复制
+- 新增：提示词中英互译（后端 Qwen），前端一键翻译按钮与加载态/错误提示
+- 新增：按文件名查询图片详情接口 GET /api/images/by-filename/{filename}/details?category=...
+- 优化：右侧原图展示支持缩放、拖动、双击复位；移动端上下布局
+- 辅助：环境检查脚本 scripts/env_check.sh 与 /health/env 环境摘要接口

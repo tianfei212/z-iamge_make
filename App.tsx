@@ -10,6 +10,7 @@ import { IconButton } from './components/IconButton';
 import { Modal } from './components/Modal';
 import { t } from './i18n';
 import { ConfigManagement } from './pages/ConfigManagement';
+import { ImageDetailModal } from './components/ImageDetailModal';
 
 const MODELS: ModelInfo[] = [
   {
@@ -193,9 +194,11 @@ const App: React.FC = () => {
     return () => { canceled = true; };
   }, [fetchImages]);
 
+  const [openDetail, setOpenDetail] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<{ filename: string; category?: string; thumbUrl?: string } | null>(null);
   const handleImageClick = (img: GeneratedImage) => {
-      // Open raw image in new tab
-      window.open(img.originalUrl || img.url, '_blank');
+      setDetailTarget({ filename: img.filename || '', category: img.category, thumbUrl: img.url });
+      setOpenDetail(true);
   };
 
   const toggleSelection = (e: React.MouseEvent, id: string) => {
@@ -431,6 +434,16 @@ const App: React.FC = () => {
           handleImageClick={handleImageClick}
         />
       </div>
+
+      {detailTarget ? (
+        <ImageDetailModal
+          open={openDetail}
+          onClose={() => setOpenDetail(false)}
+          filename={detailTarget.filename}
+          category={detailTarget.category}
+          thumbUrl={detailTarget.thumbUrl}
+        />
+      ) : null}
 
       <Modal
         open={openFeatureModal}

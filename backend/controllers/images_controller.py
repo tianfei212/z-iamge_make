@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, Response
 
 from backend.config import load_settings
 from backend.utils import decode_image_id, encode_image_id, safe_dir_name, safe_join
+from backend.services.db_service import DBService
 
 
 router = APIRouter()
@@ -156,3 +157,104 @@ def get_thumbnail(image_id: str, size: int = Query(512, ge=64, le=1024)):
         return Response(content=data, media_type="image/jpeg")
 
     return FileResponse(thumb_path, media_type="image/jpeg")
+
+
+@router.get("/api/images/by-filename/{filename}/details")
+def get_image_details_by_filename(filename: str, category: Optional[str] = None):
+    settings = load_settings()
+    base = os.path.abspath(settings.output_dir)
+    if not os.path.isdir(base):
+        raise HTTPException(status_code=404, detail={"status": "error", "message": "Output dir not found"})
+    fname = (filename or "").strip()
+    if not fname:
+        raise HTTPException(status_code=422, detail={"status": "error", "message": "Filename required"})
+    cat = safe_dir_name(category) if category else None
+    rel_path: Optional[str] = None
+    full_path: Optional[str] = None
+    if cat:
+        rel_path = f"{cat}/{fname}"
+        full_path = safe_join(settings.output_dir, rel_path)
+        if not full_path or not os.path.isfile(full_path):
+            # fallback: not found under provided category
+            rel_path = None
+            full_path = None
+    if rel_path is None:
+        try:
+            cats = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
+        except OSError:
+            cats = []
+        for c in cats:
+            if c.startswith("."):
+                continue
+            p = os.path.join(base, c, fname)
+            if os.path.isfile(p):
+                rel_path = f"{c}/{fname}"
+                full_path = p
+                break
+    if not rel_path or not full_path:
+        raise HTTPException(status_code=404, detail={"status": "error", "message": "File not found"})
+    try:
+        st = os.stat(full_path)
+        ts = int(st.st_mtime * 1000)
+    except OSError:
+        ts = int(os.path.getmtime(full_path)) if os.path.exists(full_path) else int((__import__("time").time()) * 1000)
+    image_id = encode_image_id(rel_path)
+    image = {
+        "id": image_id,
+        "category": rel_path.split("/")[0],
+        "filename": fname,
+        "timestamp": ts,
+        "originalUrl": f"/api/images/{image_id}/raw",
+        "thumbUrl": f"/api/images/{image_id}/thumb",
+        "url": f"/api/images/{image_id}/thumb",
+    }
+    svc = DBService()
+    # First try precise match on relative_url
+    with __import__("contextlib").closing(__import__("sqlite3").connect(__import__("os").path.join(os.path.dirname(os.path.dirname(__file__)), "data", "app.db"))) as _:
+        pass
+    # Query items by relative_url
+    from backend.db.connection import get_conn
+    record_row: Optional[Dict[str, Any]] = None
+    with get_conn() as conn:
+        cur = conn.execute("SELECT record_id,id FROM items WHERE relative_url=? ORDER BY id DESC LIMIT 1", (rel_path,))
+        row = cur.fetchone()
+        if not row:
+            # fallback: match by absolute_path suffix
+            cur = conn.execute("SELECT record_id,id,absolute_path FROM items ORDER BY id DESC")
+            rec_id = None
+            for r in cur.fetchall():
+                ap = str(r[2] or "")
+                if ap.replace("\\", "/").endswith(rel_path):
+                    rec_id = int(r[0])
+                    break
+            if rec_id is not None:
+                record_row = svc.get_record(rec_id)
+        else:
+            rec_id = int(row[0])
+            record_row = svc.get_record(rec_id)
+    if not record_row:
+        # Not recorded; still return image basic info with empty prompts
+        return {
+            "image": image,
+            "prompts": {
+                "positive": None,
+                "negative": None,
+                "base_prompt": None,
+                "category_prompt": None,
+            },
+            "meta": {}
+        }
+    prompts = {
+        "positive": record_row.get("refined_positive"),
+        "negative": record_row.get("refined_negative"),
+        "base_prompt": record_row.get("base_prompt"),
+        "category_prompt": record_row.get("category_prompt"),
+    }
+    meta = {
+        "aspect_ratio": record_row.get("aspect_ratio"),
+        "quality": record_row.get("quality"),
+        "model_name": record_row.get("model_name"),
+        "created_at": record_row.get("created_at"),
+        "status": record_row.get("status"),
+    }
+    return {"image": image, "prompts": prompts, "meta": meta}

@@ -42,3 +42,35 @@ def health():
             "filesystem": fs_status
         }
     }
+
+
+@router.get("/health/env")
+def health_env():
+    import os
+    import sys
+    data = {
+        "conda_env": os.environ.get("CONDA_DEFAULT_ENV") or None,
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+    }
+    try:
+        import fastapi as _f
+        data["fastapi"] = getattr(_f, "__version__", "ok")
+    except Exception:
+        data["fastapi"] = None
+    try:
+        import uvicorn as _u
+        data["uvicorn"] = getattr(_u, "__version__", "ok")
+    except Exception:
+        data["uvicorn"] = None
+    try:
+        import PIL as _p
+        data["pillow"] = getattr(_p, "__version__", "ok")
+    except Exception:
+        data["pillow"] = None
+    try:
+        import sqlite3 as _s
+        data["sqlite"] = getattr(_s, "sqlite_version", None)
+    except Exception:
+        data["sqlite"] = None
+    ok = (data["conda_env"] == "make_image") and all(v for k, v in data.items() if k not in {"conda_env"})
+    return {"status": "ok" if ok else "degraded", "env": data}
