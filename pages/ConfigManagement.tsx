@@ -9,6 +9,7 @@ interface GlobalSettings {
 export const ConfigManagement: React.FC = () => {
   const [global, setGlobal] = useState<GlobalSettings>({ common_subject: '', global_style: '', negative_prompt: '' });
   const [savingGlobal, setSavingGlobal] = useState(false);
+  const [enablePromptUpdateRequest, setEnablePromptUpdateRequest] = useState<boolean>(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [newCategory, setNewCategory] = useState('');
   const [prompts, setPrompts] = useState<Record<string, string>>({});
@@ -26,11 +27,12 @@ export const ConfigManagement: React.FC = () => {
     setLoading(true);
     setErr(null);
     try {
-      const [g, c, p, m] = await Promise.all([
+      const [g, c, p, m, flags] = await Promise.all([
         fetch('/api/config/global').then(r => r.json()),
         fetch('/api/categories').then(r => r.json()),
         fetch('/api/prompts').then(r => r.json()),
-        fetch('/api/models').then(r => r.json())
+        fetch('/api/models').then(r => r.json()),
+        fetch('/api/config/flags').then(r => r.json()).catch(() => ({ enable_prompt_update_request: false }))
       ]);
       setGlobal({
         common_subject: g.common_subject ?? '',
@@ -41,6 +43,7 @@ export const ConfigManagement: React.FC = () => {
       setPrompts((p.prompts || {}) as Record<string, string>);
       const modelsList = (m.models || []) as any[];
       setModels(modelsList);
+      setEnablePromptUpdateRequest(!!flags.enable_prompt_update_request);
       try {
         const resp = await fetch('/api/config/limits');
         if (resp.ok) {
@@ -387,6 +390,40 @@ export const ConfigManagement: React.FC = () => {
             >
               保存
             </button>
+          </div>
+          <div className="mt-4 border-t border-[#2e3035] pt-4">
+            <h3 className="text-xs font-bold mb-2">功能开关</h3>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={enablePromptUpdateRequest}
+                onChange={(e) => setEnablePromptUpdateRequest(e.target.checked)}
+              />
+              <span>启用提示词继承（每张图片使用上一张精炼正向提示词）</span>
+            </label>
+            <div className="mt-2">
+              <button
+                className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs"
+                onClick={async () => {
+                  try {
+                    const resp = await fetch('/api/config/flags', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ enable_prompt_update_request: enablePromptUpdateRequest })
+                    });
+                    if (!resp.ok) throw new Error('save flags failed');
+                    const { showToast } = await import('../components/Toast');
+                    showToast('功能开关已保存', 'success');
+                    await fetch('/api/config/reload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'save_flags' }) }).catch(() => {});
+                  } catch {
+                    const { showToast } = await import('../components/Toast');
+                    showToast('保存功能开关失败', 'error');
+                  }
+                }}
+              >
+                保存功能开关
+              </button>
+            </div>
           </div>
         </section>
 

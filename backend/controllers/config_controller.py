@@ -3,9 +3,11 @@ from backend.services.settings_service import get_global_settings, update_global
 from backend.services.runtime_config_service import get_runtime_config
 from backend.services.category_service import create_category, list_categories
 from backend.services.prompt_service import upsert_prompt, list_prompts
-from backend.config.settings import load_settings, reload_settings
+from backend.config.settings import load_settings, reload_settings, CONFIG_LOCAL_PATH
 from backend.services.model_service import list_models, get_model_id_by_model_name, update_model, update_limit_by_model_name
 from typing import Dict, Any
+import os
+import json
 
 router = APIRouter()
 
@@ -80,3 +82,32 @@ def update_all(payload: dict):
 def force_reload():
     reload_settings()
     return {"status": "ok", "runtime": get_runtime_config()}
+
+@router.get("/api/config/flags")
+def get_flags():
+    s = load_settings()
+    return {"enable_prompt_update_request": bool(getattr(s, "enable_prompt_update_request", False))}
+
+@router.put("/api/config/flags")
+def put_flags(payload: dict):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail={"error": "invalid payload"})
+    val = bool(payload.get("enable_prompt_update_request", False))
+    try:
+        data: Dict[str, Any] = {}
+        if os.path.exists(CONFIG_LOCAL_PATH):
+            try:
+                with open(CONFIG_LOCAL_PATH, "r") as f:
+                    raw = json.load(f)
+                    if isinstance(raw, dict):
+                        data = raw
+            except Exception:
+                data = {}
+        data["enable_prompt_update_request"] = val
+        os.makedirs(os.path.dirname(CONFIG_LOCAL_PATH), exist_ok=True)
+        with open(CONFIG_LOCAL_PATH, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        reload_settings()
+        return {"status": "ok", "enable_prompt_update_request": val}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": f"save flags failed: {e}"})
