@@ -35,3 +35,11 @@
 - 新增：按文件名查询图片详情接口 GET /api/images/by-filename/{filename}/details?category=...
 - 优化：右侧原图展示支持缩放、拖动、双击复位；移动端上下布局
 - 辅助：环境检查脚本 scripts/env_check.sh 与 /health/env 环境摘要接口
+
+## v2.3.4 - 2025-12-30
+- 新增：文本描述的自动修正功能
+  - 通过 Qwen 对原始提示词进行精炼与小幅变体（可配置 0.01–0.20）
+  - 开启继承后串行执行，两次向 Qwen 发起请求（精炼 + 变体），确保第二次基于第一次结果
+  - 结构化日志记录 qwen_request/qwen_response 与 qwen_request_delta/qwen_response_delta，含中英文提示词与元信息
+- 数据库：在 records 表新增 positive_zh/negative_zh 两列存储中文提示词（可空），并贯通生成与记录写入
+- 迁移：提供迁移脚本与新库构建脚本，支持在维护窗口安全切换

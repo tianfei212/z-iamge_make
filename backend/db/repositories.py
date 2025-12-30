@@ -21,6 +21,8 @@ class RecordsRepo:
                         category_prompt=?,
                         refined_positive=?,
                         refined_negative=?,
+                        positive_zh=?,
+                        negative_zh=?,
                         aspect_ratio=?,
                         quality=?,
                         count=?,
@@ -37,6 +39,8 @@ class RecordsRepo:
                         data.get("category_prompt"),
                         data.get("refined_positive"),
                         data.get("refined_negative"),
+                        data.get("positive_zh"),
+                        data.get("negative_zh"),
                         data.get("aspect_ratio"),
                         data.get("quality"),
                         data.get("count"),
@@ -50,8 +54,8 @@ class RecordsRepo:
             # Otherwise insert, but ignore if content_hash already exists to avoid UNIQUE violation
             cur.execute(
                 """
-                INSERT OR IGNORE INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,aspect_ratio,quality,count,model_name,status,content_hash,item_count)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                INSERT OR IGNORE INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,positive_zh,negative_zh,aspect_ratio,quality,count,model_name,status,content_hash,item_count)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     data.get("job_id"),
@@ -62,6 +66,8 @@ class RecordsRepo:
                     data.get("category_prompt"),
                     data.get("refined_positive"),
                     data.get("refined_negative"),
+                    data.get("positive_zh"),
+                    data.get("negative_zh"),
                     data.get("aspect_ratio"),
                     data.get("quality"),
                     data.get("count"),
@@ -83,8 +89,8 @@ class RecordsRepo:
             # As a fallback, insert without content_hash if still not present
             cur.execute(
                 """
-                INSERT INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,aspect_ratio,quality,count,model_name,status,item_count)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,positive_zh,negative_zh,aspect_ratio,quality,count,model_name,status,item_count)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     data.get("job_id"),
@@ -95,6 +101,8 @@ class RecordsRepo:
                     data.get("category_prompt"),
                     data.get("refined_positive"),
                     data.get("refined_negative"),
+                    data.get("positive_zh"),
+                    data.get("negative_zh"),
                     data.get("aspect_ratio"),
                     data.get("quality"),
                     data.get("count"),

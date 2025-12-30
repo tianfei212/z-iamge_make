@@ -86,8 +86,29 @@ class Settings:
 
     @property
     def enable_prompt_update_request(self) -> bool:
-        value = self.raw.get("enable_prompt_update_request", False)
+        params = self.parameters
+        value = params.get("enable_prompt_update_request", False)
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "y"}
         return bool(value)
+
+    @property
+    def prompt_delta_ratio(self) -> float:
+        params = self.parameters
+        v = params.get("prompt_delta_ratio", 0.1)
+        if v is None:
+            docs = self.raw.get("docs", {})
+            if isinstance(docs, dict):
+                v = docs.get("parameters.prompt_delta_ratio", 0.1)
+        try:
+            x = float(v)
+        except Exception:
+            x = 0.1
+        if x < 0.01:
+            x = 0.01
+        if x > 0.20:
+            x = 0.20
+        return x
 
     def resolve_dashscope_key(self) -> Optional[str]:
         return (

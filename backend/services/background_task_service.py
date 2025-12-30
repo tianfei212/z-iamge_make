@@ -170,6 +170,8 @@ def _execute_tasks_parallel(job_id: str, tasks: List[Dict[str, Any]], process_fu
             service0 = t0.get("service")
             refined_pos = t0.get("refined_positive") or t0.get("prompt")
             refined_neg = t0.get("refined_negative") or t0.get("negative_prompt") or ""
+            refined_pos_zh = t0.get("refined_positive_zh")
+            refined_neg_zh = t0.get("refined_negative_zh")
         # resolve model name
         from backend.config import load_settings
         settings = load_settings()
@@ -246,6 +248,8 @@ def _execute_tasks_parallel(job_id: str, tasks: List[Dict[str, Any]], process_fu
             "category": context.get("category"),
             "refined_positive": refined_pos or "",
             "refined_negative": refined_neg or "",
+            "refined_positive_zh": refined_pos_zh,
+            "refined_negative_zh": refined_neg_zh,
             "aspect_ratio": context.get("aspect_ratio"),
             "resolution": context.get("resolution"),
             "count": context.get("count", len(tasks)),
@@ -276,6 +280,7 @@ def _execute_tasks_serial(job_id: str, tasks: List[Dict[str, Any]], process_func
                 # Build next prompt based on previous refined positive
                 prev_pos = tasks[i-1].get("refined_positive") or tasks[i-1].get("prompt") or context.get("prompt")
                 delta_ratio = float(getattr(settings, "prompt_delta_ratio", 0.1))
+                print(f"[serial_chain] job={job_id} step={i} base_prev_pos={str(prev_pos)[:120]} delta_ratio={delta_ratio}")
                 refined2 = client.refine_prompt_with_delta(
                     base_positive=prev_pos or "",
                     category=context.get("category", ""),
@@ -288,6 +293,8 @@ def _execute_tasks_serial(job_id: str, tasks: List[Dict[str, Any]], process_func
                 t["negative_prompt"] = refined2["negative_prompt"]
                 t["refined_positive"] = refined2["positive_prompt"]
                 t["refined_negative"] = refined2["negative_prompt"]
+                t["refined_positive_zh"] = refined2.get("positive_prompt_zh")
+                t["refined_negative_zh"] = refined2.get("negative_prompt_zh")
                 t["inherited_prompt"] = True
                 t["delta_ratio"] = delta_ratio
             # Execute
@@ -316,6 +323,8 @@ def _execute_tasks_serial(job_id: str, tasks: List[Dict[str, Any]], process_func
         out_dir = load_settings().output_dir
         refined_pos = tasks[0].get("refined_positive") or tasks[0].get("prompt")
         refined_neg = tasks[0].get("refined_negative") or tasks[0].get("negative_prompt") or ""
+        refined_pos_zh = tasks[0].get("refined_positive_zh")
+        refined_neg_zh = tasks[0].get("refined_negative_zh")
         # Collect items same as parallel
         items = []
         for t, r in zip(tasks, results):
@@ -351,6 +360,8 @@ def _execute_tasks_serial(job_id: str, tasks: List[Dict[str, Any]], process_func
             "category": context.get("category"),
             "refined_positive": refined_pos or "",
             "refined_negative": refined_neg or "",
+            "refined_positive_zh": refined_pos_zh,
+            "refined_negative_zh": refined_neg_zh,
             "aspect_ratio": context.get("aspect_ratio"),
             "resolution": context.get("resolution"),
             "count": context.get("count", len(tasks)),
