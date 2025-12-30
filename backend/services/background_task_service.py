@@ -97,8 +97,13 @@ def _process_job_lifecycle(job_id: str, context: Dict[str, Any], generator_func:
                 _TASK_STORE[job_id].total_tasks = len(tasks)
                 _TASK_STORE[job_id].status = "running"
 
-        # 3. Execute Tasks in Parallel
-        _execute_tasks_parallel(job_id, tasks, process_func, context)
+        # 3. Execute Tasks (Parallel or Serial depending on config)
+        from backend.config import load_settings
+        s = load_settings()
+        if bool(getattr(s, "enable_prompt_update_request", False)):
+            _execute_tasks_serial(job_id, tasks, process_func, context, s)
+        else:
+            _execute_tasks_parallel(job_id, tasks, process_func, context)
         
     except Exception as e:
         logger.error(f"Job {job_id} failed during lifecycle: {e}")
@@ -250,6 +255,110 @@ def _execute_tasks_parallel(job_id: str, tasks: List[Dict[str, Any]], process_fu
         RecordService.instance().add_record(job_meta, items, job_id=job_id)
     except Exception as e:
         logger.error(f"record write failed for job {job_id}: {e}")
+
+def _execute_tasks_serial(job_id: str, tasks: List[Dict[str, Any]], process_func, context: Dict[str, Any], settings):
+    """
+    Execute tasks strictly one by one with dependency on previous refined prompt.
+    Ensures two or more Qwen requests appear in logs when inheritance is enabled.
+    """
+    logger.info(f"Executing job {job_id} in SERIAL mode with {len(tasks)} tasks")
+    results = []
+    completed_count = 0
+    try:
+        from backend.services.dashscope_client_service import DashScopeClient
+        client = DashScopeClient(settings=settings)
+        default_style = settings.prompts.get("default_style", "")
+        default_negative = settings.prompts.get("default_negative_prompt", "")
+        current_negative = context.get("negative_prompt") or default_negative
+        role = settings.role
+        for i, t in enumerate(tasks):
+            if i >= 1:
+                # Build next prompt based on previous refined positive
+                prev_pos = tasks[i-1].get("refined_positive") or tasks[i-1].get("prompt") or context.get("prompt")
+                delta_ratio = float(getattr(settings, "prompt_delta_ratio", 0.1))
+                refined2 = client.refine_prompt_with_delta(
+                    base_positive=prev_pos or "",
+                    category=context.get("category", ""),
+                    default_style=default_style,
+                    default_negative_prompt=current_negative,
+                    role=role,
+                    change_ratio=delta_ratio
+                )
+                t["prompt"] = refined2["positive_prompt"]
+                t["negative_prompt"] = refined2["negative_prompt"]
+                t["refined_positive"] = refined2["positive_prompt"]
+                t["refined_negative"] = refined2["negative_prompt"]
+                t["inherited_prompt"] = True
+                t["delta_ratio"] = delta_ratio
+            # Execute
+            res = process_func(t)
+            results.append(res)
+            completed_count += 1
+            with _STATUS_LOCK:
+                if job_id in _TASK_STORE:
+                    _TASK_STORE[job_id].completed_tasks += 1
+        logger.info(f"Job {job_id} SERIAL completed. Success: {sum(1 for r in results if isinstance(r, dict) and r.get('status')=='success')}/{len(tasks)}")
+    except Exception as e:
+        logger.error(f"Serial execution failed for job {job_id}: {e}")
+        results.append({"status": "failed", "message": str(e)})
+    # Update final status
+    with _STATUS_LOCK:
+        if job_id in _TASK_STORE:
+            task_status = _TASK_STORE[job_id]
+            task_status.results = results
+            task_status.completed_tasks = len(tasks)
+            task_status.status = "completed"
+    # Persist record
+    try:
+        from backend.services.record_service import RecordService
+        from backend.config import load_settings
+        from backend.utils import decode_image_id, encode_image_id, safe_dir_name, safe_join
+        out_dir = load_settings().output_dir
+        refined_pos = tasks[0].get("refined_positive") or tasks[0].get("prompt")
+        refined_neg = tasks[0].get("refined_negative") or tasks[0].get("negative_prompt") or ""
+        # Collect items same as parallel
+        items = []
+        for t, r in zip(tasks, results):
+            if not isinstance(r, dict) or r.get("status") != "success":
+                continue
+            rel_url = r.get("originalUrl") or r.get("url")
+            saved_path = r.get("saved_path")
+            abs_path = saved_path
+            if (not abs_path) and isinstance(rel_url, str) and rel_url.startswith("/api/images/"):
+                try:
+                    parts = rel_url.split("/")
+                    image_id = parts[3] if len(parts) >= 4 else ""
+                    rel = decode_image_id(image_id)
+                    if rel:
+                        path_calc = safe_join(out_dir, rel)
+                        if path_calc:
+                            abs_path = path_calc
+                except Exception:
+                    pass
+            if rel_url and abs_path:
+                items.append({
+                    "seed": t.get("seed"),
+                    "temperature": t.get("temperature"),
+                    "top_p": t.get("top_p"),
+                    "relative_url": rel_url,
+                    "absolute_path": abs_path,
+                })
+        job_meta = {
+            "user_id": context.get("user_id"),
+            "session_id": context.get("session_id"),
+            "created_at": context.get("created_at"),
+            "prompt": context.get("prompt"),
+            "category": context.get("category"),
+            "refined_positive": refined_pos or "",
+            "refined_negative": refined_neg or "",
+            "aspect_ratio": context.get("aspect_ratio"),
+            "resolution": context.get("resolution"),
+            "count": context.get("count", len(tasks)),
+            "model": tasks[0].get("model") or "",
+        }
+        RecordService.instance().add_record(job_meta, items, job_id=job_id)
+    except Exception as e:
+        logger.error(f"record write failed for job {job_id} (serial): {e}")
 
 # Deprecated: Old submit_job for compatibility if needed, but we will replace usages
 def submit_job(job_id: str, tasks: List[Dict[str, Any]], process_func) -> None:
