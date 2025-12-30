@@ -84,6 +84,11 @@ class Settings:
         value = self.raw.get("parameters", {})
         return value if isinstance(value, dict) else {}
 
+    @property
+    def enable_prompt_update_request(self) -> bool:
+        value = self.raw.get("enable_prompt_update_request", False)
+        return bool(value)
+
     def resolve_dashscope_key(self) -> Optional[str]:
         return (
             os.getenv("DASHSCOPE_API_KEY")

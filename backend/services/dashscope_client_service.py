@@ -12,6 +12,8 @@ import time
 from typing import Any, Dict, Optional
 
 import requests
+import logging
+import uuid
 
 from backend.config import Settings, load_settings
 from backend.utils import file_to_data_url, guess_extension, safe_dir_name
@@ -28,6 +30,13 @@ class DashScopeClient:
         # Value: (positive, negative, timestamp)
         self._prompt_cache = {}
         self._cache_lock = threading.Lock()
+        self._prompt_logger = logging.getLogger("prompt_trace")
+        if not self._prompt_logger.handlers:
+            h = logging.StreamHandler()
+            fmt = logging.Formatter("%(message)s")
+            h.setFormatter(fmt)
+            self._prompt_logger.addHandler(h)
+            self._prompt_logger.setLevel(logging.INFO)
 
     @property
     def settings(self) -> Settings:
@@ -173,6 +182,24 @@ Output Format (Strict JSON):
 }}
 """
         try:
+            req_id = str(uuid.uuid4())
+            env_info = {
+                "conda_env": os.environ.get("CONDA_DEFAULT_ENV") or None,
+                "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
+                "model_qwen": self.settings.models.get("qwen", "qwen-max"),
+            }
+            self._prompt_logger.info(__import__("json").dumps({
+                "timestamp": int(time.time()*1000),
+                "event": "qwen_request",
+                "request_id": req_id,
+                "role": role,
+                "task": "refine_prompt",
+                "env": env_info,
+                "original_prompt": prompt,
+                "category": category,
+                "default_style": default_style,
+                "default_negative_prompt": default_negative_prompt
+            }, ensure_ascii=False))
             # Reuse call_qwen
             result = self.call_qwen(instruction)
             if result.get("status") == "success":
@@ -197,6 +224,18 @@ Output Format (Strict JSON):
                     pos = data.get("positive_prompt")
                     neg = data.get("negative_prompt")
                     if pos and neg:
+                        # translate to zh for logging
+                        pos_zh = self._translate(pos)
+                        neg_zh = self._translate(neg)
+                        self._prompt_logger.info(json.dumps({
+                            "timestamp": int(time.time()*1000),
+                            "event": "qwen_response",
+                            "request_id": req_id,
+                            "positive_en": pos,
+                            "negative_en": neg,
+                            "positive_zh": pos_zh,
+                            "negative_zh": neg_zh
+                        }, ensure_ascii=False))
                         # Update Cache
                         with self._cache_lock:
                             self._prompt_cache[cache_key] = (pos, neg, now)
@@ -212,6 +251,22 @@ Output Format (Strict JSON):
         except Exception as e:
             print(f"[Refine] Error: {e}")
             return {"positive_prompt": prompt, "negative_prompt": default_negative_prompt}
+
+    def _translate(self, text: str) -> str:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return ""
+        prompt = (
+            "Translate the following text to Chinese. Only return the translated text without any explanation: "
+            f"\"{cleaned}\""
+        )
+        try:
+            r = self.call_qwen(prompt)
+            if r.get("status") == "success":
+                return str(r.get("output") or "").strip() or cleaned
+        except Exception:
+            pass
+        return cleaned
 
     def call_qwen(self, prompt: str, model: Optional[str] = None):
         endpoint = self.settings.endpoints.get("qwen")

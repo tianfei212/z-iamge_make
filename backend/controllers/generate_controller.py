@@ -36,7 +36,7 @@ def _task_generator(context: dict):
     temp_min, temp_max = params_cfg.get("temperature_range", [1.0, 1.0])
     top_p_min, top_p_max = params_cfg.get("top_p_range", [0.8, 0.8])
     
-    # 1. Refine Prompt with Qwen (once per job, cached by client)
+    # 1. Refine Prompt with Qwen (once per job, or per-image if enabled)
     role = settings.role
     default_style = settings.prompts.get("default_style", "")
     default_negative = settings.prompts.get("default_negative_prompt", "")
@@ -51,14 +51,27 @@ def _task_generator(context: dict):
         default_negative_prompt=current_negative,
         role=role
     )
-    
     final_positive_prompt = refined["positive_prompt"]
     final_negative_prompt = refined["negative_prompt"]
     print(f"Refined Positive: {final_positive_prompt[:50]}...")
     
     # 2. Generate Tasks
     tasks = []
-    for _ in range(req_count):
+    inherit_enabled = bool(settings.enable_prompt_update_request)
+    prev_positive = final_positive_prompt
+    for idx in range(req_count):
+        if inherit_enabled and idx >= 1:
+            # Re-refine using previous positive prompt (inheritance)
+            refined2 = client.refine_prompt(
+                prompt=prev_positive,
+                category=req_category,
+                default_style=default_style,
+                default_negative_prompt=current_negative,
+                role=role
+            )
+            final_positive_prompt = refined2["positive_prompt"]
+            final_negative_prompt = refined2["negative_prompt"]
+            prev_positive = final_positive_prompt
         seed = random.randint(0, 4294967295)
         temperature = random.uniform(temp_min, temp_max)
         top_p = random.uniform(top_p_min, top_p_max)
@@ -79,6 +92,8 @@ def _task_generator(context: dict):
             "refined_positive": final_positive_prompt,
             "refined_negative": final_negative_prompt,
         }
+        if inherit_enabled and idx >= 1:
+            task_params["inherited_prompt"] = True
         tasks.append(task_params)
     return tasks
 
