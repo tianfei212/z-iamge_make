@@ -61,13 +61,14 @@ def _task_generator(context: dict):
     prev_positive = final_positive_prompt
     for idx in range(req_count):
         if inherit_enabled and idx >= 1:
-            # Re-refine using previous positive prompt (inheritance)
-            refined2 = client.refine_prompt(
-                prompt=prev_positive,
+            # Variant: ~10% adjustments based on previous positive prompt
+            refined2 = client.refine_prompt_with_delta(
+                base_positive=prev_positive,
                 category=req_category,
                 default_style=default_style,
                 default_negative_prompt=current_negative,
-                role=role
+                role=role,
+                change_ratio=0.1
             )
             final_positive_prompt = refined2["positive_prompt"]
             final_negative_prompt = refined2["negative_prompt"]
@@ -94,6 +95,7 @@ def _task_generator(context: dict):
         }
         if inherit_enabled and idx >= 1:
             task_params["inherited_prompt"] = True
+            task_params["delta_ratio"] = 0.1
         tasks.append(task_params)
     return tasks
 

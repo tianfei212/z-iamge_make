@@ -252,6 +252,92 @@ Output Format (Strict JSON):
             print(f"[Refine] Error: {e}")
             return {"positive_prompt": prompt, "negative_prompt": default_negative_prompt}
 
+    def refine_prompt_with_delta(self, base_positive: str, category: str, default_style: str, default_negative_prompt: str, role: str, change_ratio: float = 0.1) -> Dict[str, str]:
+        """
+        Ask Qwen to produce a variant prompt based on the previous refined positive, with ~10% adjustments.
+        Keeps the core semantics and composition stable while introducing minor variations.
+        """
+        now = time.time()
+        req_id = str(uuid.uuid4())
+        env_info = {
+            "conda_env": os.environ.get("CONDA_DEFAULT_ENV") or None,
+            "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
+            "model_qwen": self.settings.models.get("qwen", "qwen-max"),
+        }
+        self._prompt_logger.info(__import__("json").dumps({
+            "timestamp": int(now*1000),
+            "event": "qwen_request_delta",
+            "request_id": req_id,
+            "role": role,
+            "task": "refine_prompt_delta",
+            "env": env_info,
+            "base_positive": base_positive,
+            "category": category,
+            "default_style": default_style,
+            "default_negative_prompt": default_negative_prompt,
+            "delta_ratio": change_ratio
+        }, ensure_ascii=False))
+        instruction = f"""
+{role}
+
+Task:
+Produce a variant of the following refined positive prompt with approximately {int(change_ratio*100)}% adjustments.
+Keep the core subject, overall composition and intent stable.
+Apply minor variations only (e.g., lighting, angle, atmosphere details, small props, texture nuances).
+Do NOT change the language (keep English), and keep it concise and production-ready.
+Also return a consistent negative prompt.
+
+Base Positive Prompt:
+"{base_positive}"
+
+Preferred Style: {default_style}
+Default Negative Prompt: {default_negative_prompt}
+
+Output Format (Strict JSON):
+{{
+  "positive_prompt": "...",
+  "negative_prompt": "..."
+}}
+"""
+        try:
+            result = self.call_qwen(instruction)
+            if result.get("status") == "success":
+                content = result.get("output", "")
+                import json, re
+                json_str = content
+                match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+                if match:
+                    json_str = match.group(1)
+                elif re.search(r'```\s*(.*?)\s*```', content, re.DOTALL):
+                    match = re.search(r'```\s*(.*?)\s*```', content, re.DOTALL)
+                    if match:
+                        json_str = match.group(1)
+                try:
+                    data = json.loads(json_str)
+                    pos = data.get("positive_prompt")
+                    neg = data.get("negative_prompt")
+                    if pos and neg:
+                        pos_zh = self._translate(pos)
+                        neg_zh = self._translate(neg)
+                        self._prompt_logger.info(json.dumps({
+                            "timestamp": int(time.time()*1000),
+                            "event": "qwen_response_delta",
+                            "request_id": req_id,
+                            "positive_en": pos,
+                            "negative_en": neg,
+                            "positive_zh": pos_zh,
+                            "negative_zh": neg_zh,
+                            "delta_ratio": change_ratio
+                        }, ensure_ascii=False))
+                        return {"positive_prompt": pos, "negative_prompt": neg}
+                except json.JSONDecodeError:
+                    pass
+            # fallback: apply tiny textual variation locally if Qwen fails
+            fallback_pos = base_positive + " | subtle lighting shift, slight angle variation"
+            return {"positive_prompt": fallback_pos, "negative_prompt": default_negative_prompt}
+        except Exception:
+            fallback_pos = base_positive + " | subtle lighting shift"
+            return {"positive_prompt": fallback_pos, "negative_prompt": default_negative_prompt}
     def _translate(self, text: str) -> str:
         cleaned = (text or "").strip()
         if not cleaned:
