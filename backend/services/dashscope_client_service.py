@@ -200,6 +200,7 @@ Output Format (Strict JSON):
                 "default_style": default_style,
                 "default_negative_prompt": default_negative_prompt
             }, ensure_ascii=False))
+            print(f"[qwen_request] request_id={req_id} original_prompt={prompt[:120]}")
             # Reuse call_qwen
             result = self.call_qwen(instruction)
             if result.get("status") == "success":
@@ -236,6 +237,7 @@ Output Format (Strict JSON):
                             "positive_zh": pos_zh,
                             "negative_zh": neg_zh
                         }, ensure_ascii=False))
+                        print(f"[qwen_response] request_id={req_id} pos_en={pos[:120]}")
                         # Update Cache
                         with self._cache_lock:
                             self._prompt_cache[cache_key] = (pos, neg, now)
@@ -277,6 +279,7 @@ Output Format (Strict JSON):
             "default_negative_prompt": default_negative_prompt,
             "delta_ratio": change_ratio
         }, ensure_ascii=False))
+        print(f"[qwen_request_delta] request_id={req_id} ratio={change_ratio} base_positive={base_positive[:120]}")
         instruction = f"""
 {role}
 
@@ -329,6 +332,7 @@ Output Format (Strict JSON):
                             "negative_zh": neg_zh,
                             "delta_ratio": change_ratio
                         }, ensure_ascii=False))
+                        print(f"[qwen_response_delta] request_id={req_id} pos_en={pos[:120]}")
                         return {"positive_prompt": pos, "negative_prompt": neg}
                 except json.JSONDecodeError:
                     pass

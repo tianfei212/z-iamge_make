@@ -6,25 +6,52 @@ class RecordsRepo:
     def create_or_update(self, data: Dict[str, Any]) -> int:
         with get_conn() as conn:
             cur = conn.cursor()
+            # First try to update existing record by job_id (without touching content_hash to avoid unique conflict)
+            cur.execute("SELECT id FROM records WHERE job_id=?", (data.get("job_id"),))
+            row = cur.fetchone()
+            if row:
+                rid = int(row[0])
+                cur.execute(
+                    """
+                    UPDATE records SET
+                        user_id=?,
+                        session_id=?,
+                        created_at=?,
+                        base_prompt=?,
+                        category_prompt=?,
+                        refined_positive=?,
+                        refined_negative=?,
+                        aspect_ratio=?,
+                        quality=?,
+                        count=?,
+                        model_name=?,
+                        status=?,
+                        item_count=?
+                    WHERE id=?
+                    """,
+                    (
+                        data.get("user_id"),
+                        data.get("session_id"),
+                        data.get("created_at"),
+                        data.get("base_prompt"),
+                        data.get("category_prompt"),
+                        data.get("refined_positive"),
+                        data.get("refined_negative"),
+                        data.get("aspect_ratio"),
+                        data.get("quality"),
+                        data.get("count"),
+                        data.get("model_name"),
+                        data.get("status"),
+                        int(data.get("item_count") or 0),
+                        rid,
+                    ),
+                )
+                return rid
+            # Otherwise insert, but ignore if content_hash already exists to avoid UNIQUE violation
             cur.execute(
                 """
-                INSERT INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,aspect_ratio,quality,count,model_name,status,content_hash,item_count)
+                INSERT OR IGNORE INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,aspect_ratio,quality,count,model_name,status,content_hash,item_count)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(job_id) DO UPDATE SET
-                    user_id=excluded.user_id,
-                    session_id=excluded.session_id,
-                    created_at=excluded.created_at,
-                    base_prompt=excluded.base_prompt,
-                    category_prompt=excluded.category_prompt,
-                    refined_positive=excluded.refined_positive,
-                    refined_negative=excluded.refined_negative,
-                    aspect_ratio=excluded.aspect_ratio,
-                    quality=excluded.quality,
-                    count=excluded.count,
-                    model_name=excluded.model_name,
-                    status=excluded.status,
-                    content_hash=COALESCE(excluded.content_hash, records.content_hash),
-                    item_count=excluded.item_count;
                 """,
                 (
                     data.get("job_id"),
@@ -44,12 +71,41 @@ class RecordsRepo:
                     int(data.get("item_count") or 0),
                 ),
             )
-            if data.get("content_hash"):
-                cur.execute("SELECT id FROM records WHERE content_hash=?", (data.get("content_hash"),))
-            else:
-                cur.execute("SELECT id FROM records WHERE job_id=?", (data.get("job_id"),))
+            # Resolve id either by job_id or content_hash
+            cur.execute("SELECT id FROM records WHERE job_id=?", (data.get("job_id"),))
             row = cur.fetchone()
-            return int(row[0])
+            if row:
+                return int(row[0])
+            cur.execute("SELECT id FROM records WHERE content_hash=?", (data.get("content_hash"),))
+            row = cur.fetchone()
+            if row:
+                return int(row[0])
+            # As a fallback, insert without content_hash if still not present
+            cur.execute(
+                """
+                INSERT INTO records(job_id,user_id,session_id,created_at,base_prompt,category_prompt,refined_positive,refined_negative,aspect_ratio,quality,count,model_name,status,item_count)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    data.get("job_id"),
+                    data.get("user_id"),
+                    data.get("session_id"),
+                    data.get("created_at"),
+                    data.get("base_prompt"),
+                    data.get("category_prompt"),
+                    data.get("refined_positive"),
+                    data.get("refined_negative"),
+                    data.get("aspect_ratio"),
+                    data.get("quality"),
+                    data.get("count"),
+                    data.get("model_name"),
+                    data.get("status"),
+                    int(data.get("item_count") or 0),
+                ),
+            )
+            cur.execute("SELECT id FROM records WHERE job_id=?", (data.get("job_id"),))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
 
     def update(self, record_id: int, patch: Dict[str, Any]) -> None:
         if not patch:
