@@ -4,5 +4,8 @@
     "z_image": "sk-REPLACE_ME",
     "wan": "sk-REPLACE_ME"
   },
-  "enable_prompt_update_request": false
+  "enable_prompt_update_request": false,
+  "parameters": {
+    "prompt_delta_ratio": 0.10
+  }
 }
