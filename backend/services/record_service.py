@@ -173,6 +173,8 @@ class RecordService:
                 "category_prompt": job_meta.get("category"),
                 "refined_positive": job_meta.get("refined_positive") or None,
                 "refined_negative": job_meta.get("refined_negative") or None,
+                "positive_zh": job_meta.get("refined_positive_zh"),
+                "negative_zh": job_meta.get("refined_negative_zh"),
                 "aspect_ratio": job_meta.get("aspect_ratio"),
                 "quality": job_meta.get("resolution"),
                 "count": job_meta.get("count", 1),

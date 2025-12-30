@@ -9,6 +9,7 @@ def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     try:
+        conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.executescript(
@@ -25,6 +26,8 @@ def init_db():
                 category_prompt TEXT,
                 refined_positive TEXT,
                 refined_negative TEXT,
+                positive_zh TEXT,
+                negative_zh TEXT,
                 aspect_ratio TEXT,
                 quality TEXT,
                 count INTEGER,
@@ -96,6 +99,19 @@ def init_db():
                 conn.commit()
             except Exception:
                 pass
+        # ensure records has zh columns
+        cur = conn.execute("PRAGMA table_info(records)")
+        rcols = [r[1] for r in cur.fetchall()]
+        if "positive_zh" not in rcols:
+            conn.execute("ALTER TABLE records ADD COLUMN positive_zh TEXT")
+            conn.commit()
+        if "negative_zh" not in rcols:
+            conn.execute("ALTER TABLE records ADD COLUMN negative_zh TEXT")
+            conn.commit()
+        # indexes for zh columns
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_pos_zh ON records(positive_zh)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_neg_zh ON records(negative_zh)")
+        conn.commit()
     finally:
         conn.close()
 
@@ -104,6 +120,7 @@ def init_db():
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys=ON;")
+    conn.execute("PRAGMA busy_timeout=5000;")
     try:
         yield conn
         conn.commit()

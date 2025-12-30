@@ -242,17 +242,32 @@ Output Format (Strict JSON):
                         with self._cache_lock:
                             self._prompt_cache[cache_key] = (pos, neg, now)
                             
-                        return {"positive_prompt": pos, "negative_prompt": neg}
+                        return {
+                            "positive_prompt": pos,
+                            "negative_prompt": neg,
+                            "positive_prompt_zh": pos_zh,
+                            "negative_prompt_zh": neg_zh
+                        }
                 except json.JSONDecodeError:
                     print(f"[Refine] JSON parse failed: {json_str}")
                     pass
             
             print(f"[Refine] Qwen failed or invalid output. Using original.")
-            return {"positive_prompt": prompt, "negative_prompt": default_negative_prompt}
+            return {
+                "positive_prompt": prompt,
+                "negative_prompt": default_negative_prompt,
+                "positive_prompt_zh": None,
+                "negative_prompt_zh": None
+            }
             
         except Exception as e:
             print(f"[Refine] Error: {e}")
-            return {"positive_prompt": prompt, "negative_prompt": default_negative_prompt}
+            return {
+                "positive_prompt": prompt,
+                "negative_prompt": default_negative_prompt,
+                "positive_prompt_zh": None,
+                "negative_prompt_zh": None
+            }
 
     def refine_prompt_with_delta(self, base_positive: str, category: str, default_style: str, default_negative_prompt: str, role: str, change_ratio: float = 0.1) -> Dict[str, str]:
         """
@@ -333,15 +348,30 @@ Output Format (Strict JSON):
                             "delta_ratio": change_ratio
                         }, ensure_ascii=False))
                         print(f"[qwen_response_delta] request_id={req_id} pos_en={pos[:120]}")
-                        return {"positive_prompt": pos, "negative_prompt": neg}
+                        return {
+                            "positive_prompt": pos,
+                            "negative_prompt": neg,
+                            "positive_prompt_zh": pos_zh,
+                            "negative_prompt_zh": neg_zh
+                        }
                 except json.JSONDecodeError:
                     pass
             # fallback: apply tiny textual variation locally if Qwen fails
             fallback_pos = base_positive + " | subtle lighting shift, slight angle variation"
-            return {"positive_prompt": fallback_pos, "negative_prompt": default_negative_prompt}
+            return {
+                "positive_prompt": fallback_pos,
+                "negative_prompt": default_negative_prompt,
+                "positive_prompt_zh": None,
+                "negative_prompt_zh": None
+            }
         except Exception:
             fallback_pos = base_positive + " | subtle lighting shift"
-            return {"positive_prompt": fallback_pos, "negative_prompt": default_negative_prompt}
+            return {
+                "positive_prompt": fallback_pos,
+                "negative_prompt": default_negative_prompt,
+                "positive_prompt_zh": None,
+                "negative_prompt_zh": None
+            }
     def _translate(self, text: str) -> str:
         cleaned = (text or "").strip()
         if not cleaned:

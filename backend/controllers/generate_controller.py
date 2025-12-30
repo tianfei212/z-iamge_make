@@ -53,11 +53,14 @@ def _task_generator(context: dict):
     )
     final_positive_prompt = refined["positive_prompt"]
     final_negative_prompt = refined["negative_prompt"]
+    final_positive_prompt_zh = refined.get("positive_prompt_zh")
+    final_negative_prompt_zh = refined.get("negative_prompt_zh")
     print(f"Refined Positive: {final_positive_prompt[:50]}...")
     
     # 2. Generate Tasks
     tasks = []
     inherit_enabled = bool(settings.enable_prompt_update_request)
+    delta_ratio = float(getattr(settings, "prompt_delta_ratio", 0.1))
     prev_positive = final_positive_prompt
     for idx in range(req_count):
         if inherit_enabled and idx >= 1:
@@ -68,10 +71,12 @@ def _task_generator(context: dict):
                 default_style=default_style,
                 default_negative_prompt=current_negative,
                 role=role,
-                change_ratio=0.1
+                change_ratio=delta_ratio
             )
             final_positive_prompt = refined2["positive_prompt"]
             final_negative_prompt = refined2["negative_prompt"]
+            final_positive_prompt_zh = refined2.get("positive_prompt_zh")
+            final_negative_prompt_zh = refined2.get("negative_prompt_zh")
             prev_positive = final_positive_prompt
         seed = random.randint(0, 4294967295)
         temperature = random.uniform(temp_min, temp_max)
@@ -92,10 +97,12 @@ def _task_generator(context: dict):
             "top_p": top_p,
             "refined_positive": final_positive_prompt,
             "refined_negative": final_negative_prompt,
+            "refined_positive_zh": final_positive_prompt_zh,
+            "refined_negative_zh": final_negative_prompt_zh,
         }
         if inherit_enabled and idx >= 1:
             task_params["inherited_prompt"] = True
-            task_params["delta_ratio"] = 0.1
+            task_params["delta_ratio"] = delta_ratio
         tasks.append(task_params)
     return tasks
 
