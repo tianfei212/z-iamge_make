@@ -52,11 +52,13 @@
     "global_style": "电影级写实摄影，极高动态范围，徕卡色调",
     "negative_prompt": "文字，水印，签名，模糊，重影，低对比度，畸形肢体"
   },
+  "enable_prompt_update_request": false,
   "docs": {
     "operation_mode": "database 或 config_file；database 模式优先从 SQLite 读取，异常或空回退到 config_file",
     "models_list": "模型数组，字段：id、name、provider、model_name、description、enabled(0/1)",
     "categories": "分类名称数组",
     "prompts_map": "分类到提示词的映射",
-    "global": "通用主体、风格与负面提示词的默认值"
+    "global": "通用主体、风格与负面提示词的默认值",
+    "enable_prompt_update_request": "布尔开关，True 时为每张图片继承上一张精炼正向提示词并再次调用 Qwen"
   }
 }
